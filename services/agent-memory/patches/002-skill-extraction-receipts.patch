@@ -1,0 +1,324 @@
+diff --git a/MemoryCore/src/core/skill/conversation-add/buffer-storage.ts b/MemoryCore/src/core/skill/conversation-add/buffer-storage.ts
+index 619b18f..8a24ae8 100644
+--- a/MemoryCore/src/core/skill/conversation-add/buffer-storage.ts
++++ b/MemoryCore/src/core/skill/conversation-add/buffer-storage.ts
+@@ -57,6 +57,8 @@ export interface SessionMeta {
+ 
+ /** _tasks.json 单个 task 条目（§4.3）。 */
+ export interface SkillTaskEntry {
++  /** Idempotent operator-authorized retry attempt. */
++  retry_id?: string;
+   task_id: string;
+   session_id: string;
+   user_id: string;
+@@ -260,6 +262,27 @@ export class SkillBufferStorage {
+     await this.storage.writeFile(key, JSON.stringify(buf));
+   }
+ 
++  async readResult(archiveKey: string): Promise<{ status: string; skill_ids: string[]; retry_id?: string } | null> {
++    const raw = await this.storage.readFile(`${archiveKey}.result.json`);
++    return raw ? JSON.parse(raw) : null;
++  }
++
++  async writeResult(archiveKey: string, result: { status: string; skill_ids: string[]; retry_id?: string }): Promise<void> {
++    await this.storage.writeFile(`${archiveKey}.result.json`, JSON.stringify(result));
++  }
++
++  async clearResult(archiveKey: string): Promise<void> {
++    await this.storage.unlink(`${archiveKey}.result.json`);
++  }
++
++  // The caller holds the agent extract lock, as does the DLQ writer.
++  async removeDeadTask(agent: AgentTuple, taskId: string): Promise<void> {
++    const doc = await this.readDlq(agent);
++    doc.tasks = doc.tasks.filter(task => task.task_id !== taskId);
++    doc.updated_at_ms = Date.now();
++    await this.storage.writeFile(this.dlqKey(agent), JSON.stringify(doc));
++  }
++
+   async readArchive(archiveKey: string): Promise<BufferedMessages | null> {
+     const raw = await this.storage.readFile(archiveKey);
+     if (!raw) return null;
+diff --git a/MemoryCore/src/core/skill/conversation-add/extract-worker.ts b/MemoryCore/src/core/skill/conversation-add/extract-worker.ts
+index 9747507..42f3dd3 100644
+--- a/MemoryCore/src/core/skill/conversation-add/extract-worker.ts
++++ b/MemoryCore/src/core/skill/conversation-add/extract-worker.ts
+@@ -457,6 +457,14 @@ export class SkillConversationExtractWorker {
+           break;
+         }
+ 
++        // Persist completion before acknowledging the durable task. Empty
++        // candidates are a valid extraction; missing archives are failures.
++        await this.opts.buffer.writeResult(head.archive_key, {
++          status: isGhost ? "failed" : "completed",
++          retry_id: head.retry_id,
++          skill_ids: (candidates ?? []).flatMap((candidate) => candidate.skill_id ? [candidate.skill_id] : []),
++        });
++
+         // ⑤ 抽取成功 or 幽灵 task → CAS filter 删 task（按 task_id）。
+         //
+         // 2026-08-03 crash-recovery §4.1: 原子 peek 路径下不再判定剩余 tasks
+diff --git a/MemoryCore/src/core/skill/conversation-add/trigger-service.ts b/MemoryCore/src/core/skill/conversation-add/trigger-service.ts
+index d7e8d9b..d907ff9 100644
+--- a/MemoryCore/src/core/skill/conversation-add/trigger-service.ts
++++ b/MemoryCore/src/core/skill/conversation-add/trigger-service.ts
+@@ -22,7 +22,7 @@
+  *     或后续 GC 清）。这比现状好得多：不再有丢任务风险。
+  */
+ 
+-import { randomUUID } from "node:crypto";
++import { createHash, randomUUID } from "node:crypto";
+ 
+ import type {
+   AgentTuple,
+@@ -62,6 +62,8 @@ export interface TriggerArchiveInput {
+    * 会带上，方便按 req_id 过滤 handler + trigger + worker 全链路。缺省不影响功能。
+    */
+   perfRequestId?: string;
++  idempotencyKey?: string;
++  archivedAtMs?: number;
+ }
+ 
+ export interface TriggerArchiveResult {
+@@ -111,14 +113,16 @@ export class SkillTriggerService {
+     const { session, bufferAtTrigger, taskRefId } = input;
+ 
+     // ① 生成标识
+-    const archivedAtMs = this.now();
++    const archivedAtMs = input.idempotencyKey ? input.archivedAtMs! : this.now();
+     const archiveKey = this.buffer.archiveKey(session, archivedAtMs);
+     // 前缀 `skill-extract-task-` 是内部 anchor（跟业务侧 task_id 明确区分）。
+     // 一次归档 = 一个 SkillTaskEntry.task_id；handler 侧 `[skill-perf] phase=trigger.enqueueAgent
+     // task_id=…` 与 worker 侧 `[skill-perf] kind=worker phase=consume.*` 共用同一
+     // 值，grep 一次拉全 handler + worker 双段耗时。老数据前缀 `task-` 会被
+     // worker 自然消费掉，无迁移风险（filter 按 task_id 值等价比较，不解析前缀）。
+-    const taskId = `skill-extract-task-${randomUUID().slice(0, 8)}`;
++    const taskId = input.idempotencyKey
++      ? `skill-extract-task-${createHash("sha256").update(JSON.stringify([session.instance_id, session.team_id, session.agent_id, session.user_id, session.session_id, input.idempotencyKey])).digest("hex")}`
++      : `skill-extract-task-${randomUUID().slice(0, 8)}`;
+     const agent: AgentTuple = {
+       // 2026-07-30 instance_id 塞进 tuple; worker pool 从队列出来后按此路由
+       // 到对应 instance 的资源。不给或空会直接抛。
+@@ -202,7 +206,9 @@ export class SkillTriggerService {
+           existing_tasks: doc.tasks.length,
+         });
+ 
+-        doc.tasks.push(entry);
++        // A durable result survives both transport retries and worker restarts.
++        if (input.idempotencyKey && await this.buffer.readResult(archiveKey)) return;
++        if (!doc.tasks.some((task) => task.task_id === taskId)) doc.tasks.push(entry);
+         doc.updated_at_ms = archivedAtMs;
+ 
+         const t0Write = Date.now();
+diff --git a/MemoryCore/src/gateway/skill-handlers.ts b/MemoryCore/src/gateway/skill-handlers.ts
+index e71733f..66d41f8 100644
+--- a/MemoryCore/src/gateway/skill-handlers.ts
++++ b/MemoryCore/src/gateway/skill-handlers.ts
+@@ -71,6 +71,7 @@ const TAG = "[skill-handlers]";
+ 
+ export interface SkillRouterDeps {
+   getSkillCore: () => SkillCore | undefined;
++  canAccessSkill?: (instanceId: string, skillId: string, action: "read" | "write") => Promise<boolean>;
+   /** Optional. 抽取器实例（供 worker 内部驱动）。 */
+   getSkillExtractor?: () => SkillExtractor | undefined;
+   /** Optional. 已解析的 skill 配置；handleListing 用 searchTopK 限制注入条目数。 */
+@@ -221,6 +222,8 @@ async function precheck<T>(
+   if (!core) return { ok: false, envelope: errorEnvelope(404, "Skill module not enabled", requestId) };
+   const parsed = schema.safeParse(body);
+   if (!parsed.success) return { ok: false, envelope: errorEnvelope(40001, formatZodErr(parsed.error), requestId) };
++  const skillId = (parsed.data as {skill_id?: unknown}).skill_id;
++  if (typeof skillId === "string" && deps.canAccessSkill && !await deps.canAccessSkill(auth.serviceId, skillId, "read")) return {ok:false,envelope:errorEnvelope(403,"Skill access denied",requestId)};
+   return { ok: true, core, data: parsed.data };
+ }
+ 
+@@ -245,6 +248,8 @@ async function precheckWrite<T>(
+   if (!core) return { ok: false, envelope: errorEnvelope(404, "Skill module not enabled", requestId) };
+   const parsed = schema.safeParse(body);
+   if (!parsed.success) return { ok: false, envelope: errorEnvelope(40001, formatZodErr(parsed.error), requestId) };
++  const skillId = (parsed.data as {skill_id?: unknown}).skill_id;
++  if (typeof skillId === "string" && deps.canAccessSkill && !await deps.canAccessSkill(auth.serviceId, skillId, "write")) return {ok:false,envelope:errorEnvelope(403,"Skill access denied",requestId)};
+   return { ok: true, core, data: parsed.data };
+ }
+ 
+@@ -393,7 +398,7 @@ export async function handlePatch(body: unknown, auth: V2AuthContext, requestId:
+ 
+ export async function handleDelete(body: unknown, _auth: V2AuthContext, requestId: string, deps: SkillRouterDeps): Promise<ApiResponseEnvelope> {
+   const t0 = Date.now();
+-  const pre = await precheck(deleteRequestSchema, body, _auth, deps, requestId);
++  const pre = await precheckWrite(deleteRequestSchema, body, _auth, deps, requestId);
+   if (!pre.ok) { obsLogger.warn("skill.handleDelete.done", { req_id: requestId, code: pre.envelope.code, dur_ms: Date.now() - t0, reason: "precheck" }); return pre.envelope; }
+   try {
+     const r = await pre.core.delete(pre.data);
+@@ -477,6 +482,7 @@ export async function handleGetByName(body: unknown, _auth: V2AuthContext, reque
+ 
+     // 复用 handleGet 主体:构造 get input 走 core.get,保证行为完全一致
+     // (含 version 分支、include_content / include_manifest 语义)。
++    if (deps.canAccessSkill && !await deps.canAccessSkill(_auth.serviceId,hit.skill_id,"read")) return errorEnvelope(403,"Skill access denied",requestId);
+     const row = await pre.core.get({
+       user_id: pre.data.user_id,
+       team_id: pre.data.team_id,
+@@ -546,7 +552,18 @@ export async function handleList(body: unknown, _auth: V2AuthContext, requestId:
+     // 仅供管控台"回收站"视图使用。不传 status 时默认只返回 active（见
+     // SqliteSkillStore.listSkills / TcvdbSkillStore.listSkills 中的默认值）。
+     // 普通业务调用方 **不应** 显式请求 archived——它对读/写 API 已经不可见。
+-    const r = await pre.core.list(pre.data);
++    let r = await pre.core.list(pre.data);
++    if (deps.canAccessSkill) {
++      const visible: typeof r.items = [];
++      for (let offset=0;;offset+=100) {
++        const page=await pre.core.list({...pre.data,pagination:{limit:100,offset}});
++        for (const skill of page.items) if (await deps.canAccessSkill(_auth.serviceId,skill.skill_id,"read")) visible.push(skill);
++        if (page.items.length===0 || offset+page.items.length>=page.total) break;
++      }
++      const offset=pre.data.pagination?.offset??0;
++      const limit=pre.data.pagination?.limit??20;
++      r={...r,items:visible.slice(offset,offset+limit),total:visible.length};
++    }
+     obsLogger.info("skill.handleList.done", { req_id: requestId, code: 0, dur_ms: Date.now() - t0, items: r.items.length, total: r.total });
+     return successEnvelope({ items: r.items.map(toSummary), total: r.total }, requestId);
+   } catch (e) { obsLogger.error("skill.handleList.done", { req_id: requestId, dur_ms: Date.now() - t0 }, e instanceof Error ? e : undefined); return mapCoreError(e, requestId); }
+@@ -564,7 +581,9 @@ export async function handleSearch(body: unknown, _auth: V2AuthContext, requestI
+       ? { ...data, agent_id: undefined }
+       : data;
+     const hits = await pre.core.search(searchInput);
+-    const items = hits.map((h) => ({
++    const readable = [];
++    for (const hit of hits) if (!deps.canAccessSkill || await deps.canAccessSkill(_auth.serviceId,hit.skill.skill_id,"read")) readable.push(hit);
++    const items = readable.map((h) => ({
+       ...toSummary(h.skill),
+       score: h.score,
+       // FTS5 snippet 可能为空（content 太短）；fallback 到 description。
+@@ -935,6 +954,12 @@ export async function handleListing(body: unknown, _auth: V2AuthContext, request
+       }
+     }
+ 
++    if (deps.canAccessSkill) {
++      const visible: typeof items = [];
++      for (const item of items) if (await deps.canAccessSkill(_auth.serviceId,item.skill_id,"read")) visible.push(item);
++      items=visible;
++    }
++
+     // 渲染 listing；按 char_budget 截断（保留头部 + 显式截断标记）。
+     // 默认 id 模式: 每行结构化 `- id=<skill_id>, name=<name>, desc=<description>`,
+     //   并在块内顶部加一行格式说明,让 agent 明确知道哪个字段是 skill_id、调 skill_view 时用它。
+@@ -1132,6 +1157,8 @@ export async function handleExtract(body: unknown, auth: V2AuthContext, requestI
+       },
+       bufferAtTrigger: { messages: prepared.messages as Array<Record<string, unknown>> },
+       taskRefId: input.task_id,
++      idempotencyKey: input.idempotency_key,
++      archivedAtMs: input.archived_at_ms,
+       reason: input.reason,
+       maxIterations: input.options?.max_iterations,
+       // strict_mode:true 时落 SkillTaskEntry.mode='strict', Worker 消费时透传给
+@@ -1411,6 +1438,80 @@ export type SkillHandler = (
+   deps: SkillRouterDeps,
+ ) => Promise<ApiResponseEnvelope>;
+ 
++async function handleExtractStatus(body: unknown, auth: V2AuthContext, requestId: string, deps: SkillRouterDeps): Promise<ApiResponseEnvelope> {
++  if (!body || typeof body !== "object" || Array.isArray(body)) return errorEnvelope(400, "Invalid extraction scope", requestId);
++  const input = body as Record<string, unknown>;
++  for (const field of ["team_id", "agent_id", "user_id", "session_id", "task_id"]) {
++    if (typeof input[field] !== "string" || !(input[field] as string) || input[field] === "." || input[field] === ".." || /[|/\\\x00]/.test(input[field] as string)) return errorEnvelope(400, "Invalid extraction scope", requestId);
++  }
++  if (typeof input.archived_at_ms !== "number" || !Number.isSafeInteger(input.archived_at_ms) || input.archived_at_ms <= 0) return errorEnvelope(400, "Invalid archive timestamp", requestId);
++  const wired = await deps.resolveConversationAdd?.(auth.serviceId);
++  if (!wired) return errorEnvelope(503, "Skill extraction is unavailable", requestId);
++  const session = { instance_id: auth.serviceId, space_id: auth.serviceId, team_id: input.team_id as string, agent_id: input.agent_id as string, user_id: input.user_id as string, session_id: input.session_id as string };
++  const result = await wired.buffer.readResult(wired.buffer.archiveKey(session, input.archived_at_ms));
++  if (result) return successEnvelope(result, requestId);
++  const dead = await wired.buffer.readDlq(session);
++  if (dead.tasks.some((task) => task.task_id === input.task_id)) return successEnvelope({status:"failed",skill_ids:[]},requestId);
++  // Re-enqueue from the durable task list after an in-memory queue restart.
++  const tasks = await wired.buffer.readTasks(session);
++  if (tasks.tasks.some((task) => task.task_id === input.task_id)) await wired.queue.enqueueAgent(session);
++  return successEnvelope({status:"pending",skill_ids:[]},requestId);
++}
++
++async function handleExtractRetry(body: unknown, auth: V2AuthContext, requestId: string, deps: SkillRouterDeps): Promise<ApiResponseEnvelope> {
++  // Human data-plane keys cannot operate this backend recovery endpoint.
++  if (deps.canAccessSkill) return errorEnvelope(403, "Service recovery credential required", requestId);
++  if (!body || typeof body !== "object" || Array.isArray(body)) return errorEnvelope(400, "Invalid extraction scope", requestId);
++  const input = body as Record<string, unknown>;
++  for (const field of ["team_id", "agent_id", "user_id", "session_id", "task_id", "retry_id"]) {
++    if (typeof input[field] !== "string" || !(input[field] as string) || input[field] === "." || input[field] === ".." || /[|/\\\x00]/.test(input[field] as string)) return errorEnvelope(400, "Invalid extraction scope", requestId);
++  }
++  if (typeof input.archived_at_ms !== "number" || !Number.isSafeInteger(input.archived_at_ms) || input.archived_at_ms <= 0) return errorEnvelope(400, "Invalid archive timestamp", requestId);
++  const wired = await deps.resolveConversationAdd?.(auth.serviceId);
++  if (!wired) return errorEnvelope(503, "Skill extraction is unavailable", requestId);
++  const session = { instance_id: auth.serviceId, space_id: auth.serviceId, team_id: input.team_id as string, agent_id: input.agent_id as string, user_id: input.user_id as string, session_id: input.session_id as string };
++  const archiveKey = wired.buffer.archiveKey(session, input.archived_at_ms);
++  const lock = await wired.queue.acquireExtractLock(session, 600_000);
++  if (!lock) return errorEnvelope(409, "Another extraction is active", requestId);
++  try {
++    return await wired.queue.withTasksMutex(session, { lockTtlMs: 30_000, waitDeadlineMs: 30_000 }, async () => {
++      const result = await wired.buffer.readResult(archiveKey);
++      if (result?.status === "completed") return successEnvelope(result, requestId);
++      if (result?.retry_id === input.retry_id) return successEnvelope(result, requestId);
++      const dead = await wired.buffer.readDlq(session);
++      const failed = dead.tasks.find(task => task.task_id === input.task_id);
++      if (failed?.retry_id === input.retry_id) return successEnvelope({ status: "failed", skill_ids: [], retry_id: input.retry_id }, requestId);
++      const doc = await wired.buffer.readTasks(session);
++      const pending = doc.tasks.find(task => task.task_id === input.task_id);
++      if (pending && pending.retry_id !== input.retry_id && !result && !failed) return errorEnvelope(409, "Extraction is still pending", requestId);
++      const archive = await wired.buffer.readArchive(archiveKey);
++      if (!archive?.messages?.length) return errorEnvelope(404, "Archived source is unavailable", requestId);
++      const saved = pending ?? failed;
++      if (saved && (saved.archive_key !== archiveKey || saved.user_id !== session.user_id || saved.session_id !== session.session_id)) return errorEnvelope(403, "Extraction scope does not match archive", requestId);
++      if (!pending || pending.retry_id !== input.retry_id) {
++        const entry = { ...saved, task_id: input.task_id as string, archive_key: archiveKey,
++          space_id: auth.serviceId, team_id: session.team_id,
++          agent_id: session.agent_id, user_id: session.user_id, session_id: session.session_id,
++          archived_at_ms: input.archived_at_ms as number, enqueued_at_ms: Date.now(),
++          retry_id: input.retry_id as string, retry_count: 0, last_error: undefined,
++          task_ref_id: saved?.task_ref_id ?? (typeof input.task_ref_id === "string" ? input.task_ref_id : undefined),
++          reason: saved?.reason ?? (typeof input.reason === "string" ? input.reason : undefined),
++        };
++        if (pending) doc.tasks = doc.tasks.map(task => task.task_id === pending.task_id ? entry : task);
++        else doc.tasks.push(entry);
++        doc.updated_at_ms = Date.now();
++        await wired.buffer.writeTasks(session, doc);
++      }
++      // Durable retry intent precedes clearing the failure. Replaying a lost
++      // response resumes the same task, and a completed result is never erased.
++      if (result) await wired.buffer.clearResult(archiveKey);
++      if (failed) await wired.buffer.removeDeadTask(session, input.task_id as string);
++      await wired.queue.enqueueAgent(session);
++      return successEnvelope({ status: "pending", skill_ids: [], retry_id: input.retry_id }, requestId);
++    });
++  } finally { await wired.queue.releaseExtractLock(lock); }
++}
++
+ export function makeSkillRouteTable(): Record<string, SkillHandler> {
+   return {
+     "/v3/skill/create": handleCreate,
+@@ -1428,6 +1529,8 @@ export function makeSkillRouteTable(): Record<string, SkillHandler> {
+     "/v3/skill/export": handleExport,
+     "/v3/skill/listing": handleListing,
+     "/v3/skill/extract": handleExtract,
++    "/v3/skill/extract/status": handleExtractStatus,
++    "/v3/skill/extract/retry": handleExtractRetry,
+     "/v3/skill/conversation/add": handleConversationAdd,
+     "/v3/skill/conversation/force-archive": handleForceArchive,
+   };
+diff --git a/MemoryCore/src/gateway/skill-schemas.ts b/MemoryCore/src/gateway/skill-schemas.ts
+index 4244eb6..c2b947e 100644
+--- a/MemoryCore/src/gateway/skill-schemas.ts
++++ b/MemoryCore/src/gateway/skill-schemas.ts
+@@ -245,6 +245,8 @@ export const extractRequestSchema = z.object({
+   agent_id: z.string().min(1).refine((v) => !v.includes("|"), "agent_id must not contain '|'"),
+   session_id: z.string().min(1).optional()
+     .refine((v) => !v || !v.includes("|"), { message: "session_id must not contain '|'" }),
++  idempotency_key: z.string().min(1).max(256).optional(),
++  archived_at_ms: z.number().int().positive().optional(),
+   task_id: z.string().min(1).max(128).optional(),   // 业务 task_ref_id, 透传到 SkillTaskEntry
+   messages: z.array(extractMessageSchema).min(1).max(500),
+   reason: z.string().min(1).max(500).optional(),
+@@ -257,7 +259,7 @@ export const extractRequestSchema = z.object({
+    * 走当前 v2 SKILL_REVIEW_PROMPT (宽松, 广召回), 老 client 完全兼容。
+    */
+   strict_mode: z.boolean().optional(),
+-});
++}).refine((input) => !input.idempotency_key || input.archived_at_ms !== undefined, { message: "archived_at_ms is required with idempotency_key" });
+ 
+ /**
+  * `POST /v3/skill/conversation/add` — 每轮对话结束后, Client 传本轮增量 messages。

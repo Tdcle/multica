@@ -1,3 +1,10 @@
+import {
+  KnowledgeStateSchema, KnowledgeBindingSchema, KnowledgeSpaceListSchema,
+  KnowledgeExtractionListSchema, KnowledgePanelSessionSchema,
+  type KnowledgeState, type KnowledgeBinding, type KnowledgeSpace,
+  type KnowledgeExtraction, type KnowledgePanelSession,
+} from "../knowledge/contracts";
+
 import type {
   Issue,
   IssuePriority,
@@ -2881,6 +2888,41 @@ export class ApiClient {
     await this.fetch(`/api/workspaces/${workspaceId}`, {
       method: "DELETE",
     });
+  }
+
+  // Workspace knowledge
+  async getKnowledgeState(wsId: string): Promise<KnowledgeState> {
+    const data = await this.fetch<unknown>("/api/knowledge", { headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+    return parseWithFallback(data, KnowledgeStateSchema, { configured: false, binding: null }, { endpoint: "getKnowledgeState" });
+  }
+
+  async listKnowledgeSpaces(wsId: string): Promise<KnowledgeSpace[]> {
+    const data = await this.fetch<unknown>("/api/knowledge/spaces", { headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+    return parseWithFallback(data, KnowledgeSpaceListSchema, [], { endpoint: "listKnowledgeSpaces" });
+  }
+
+  async bindKnowledge(wsId: string, input: { teamId?: string; name?: string }): Promise<KnowledgeBinding | null> {
+    const data = await this.fetch<unknown>("/api/knowledge/binding", { method: "POST", headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" }, body: JSON.stringify({ team_id: input.teamId, name: input.name }) });
+    return parseWithFallback(data, KnowledgeBindingSchema, null, { endpoint: "bindKnowledge" });
+  }
+
+  async unbindKnowledge(wsId: string): Promise<void> {
+    await this.fetch("/api/knowledge/binding", { method: "DELETE", headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+  }
+
+  async listKnowledgeExtractions(wsId: string): Promise<KnowledgeExtraction[]> {
+    const data = await this.fetch<unknown>("/api/knowledge/extractions", { headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+    return parseWithFallback(data, KnowledgeExtractionListSchema, [], { endpoint: "listKnowledgeExtractions" });
+  }
+
+  async retryKnowledgeExtraction(wsId: string, id: string): Promise<void> {
+    await this.fetch(`/api/knowledge/extractions/${encodeURIComponent(id)}/retry`, { method: "POST", headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+  }
+
+  async createKnowledgePanelSession(wsId: string): Promise<KnowledgePanelSession | null> {
+    const data = await this.fetch<unknown>("/api/knowledge/panel-session", { method: "POST", headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+    const session = parseWithFallback<KnowledgePanelSession | null>(data, KnowledgePanelSessionSchema, null, { endpoint: "createKnowledgePanelSession" });
+    return session ? { ...session, url: session.url.startsWith("/") ? `${this.baseUrl}${session.url}` : session.url } : null;
   }
 
   // Skills

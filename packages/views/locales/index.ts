@@ -23,6 +23,7 @@ import enLayout from "./en/layout.json";
 import enUsage from "./en/usage.json";
 import enUi from "./en/ui.json";
 import enSquads from "./en/squads.json";
+import enKnowledge from "./en/knowledge.json";
 import enBilling from "./en/billing.json";
 import zhHansCommon from "./zh-Hans/common.json";
 import zhHansAuth from "./zh-Hans/auth.json";
@@ -48,6 +49,7 @@ import zhHansLayout from "./zh-Hans/layout.json";
 import zhHansUsage from "./zh-Hans/usage.json";
 import zhHansUi from "./zh-Hans/ui.json";
 import zhHansSquads from "./zh-Hans/squads.json";
+import zhHansKnowledge from "./zh-Hans/knowledge.json";
 import zhHansBilling from "./zh-Hans/billing.json";
 import koCommon from "./ko/common.json";
 import koAuth from "./ko/auth.json";
@@ -73,6 +75,7 @@ import koLayout from "./ko/layout.json";
 import koUsage from "./ko/usage.json";
 import koUi from "./ko/ui.json";
 import koSquads from "./ko/squads.json";
+import koKnowledge from "./ko/knowledge.json";
 import koBilling from "./ko/billing.json";
 import jaCommon from "./ja/common.json";
 import jaAuth from "./ja/auth.json";
@@ -98,6 +101,7 @@ import jaLayout from "./ja/layout.json";
 import jaUsage from "./ja/usage.json";
 import jaUi from "./ja/ui.json";
 import jaSquads from "./ja/squads.json";
+import jaKnowledge from "./ja/knowledge.json";
 import jaBilling from "./ja/billing.json";
 
 // Single source of truth for the resource bundle. Both apps (web layout +
@@ -130,6 +134,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: enUi,
     squads: enSquads,
     billing: enBilling,
+    knowledge: enKnowledge,
   },
   "zh-Hans": {
     common: zhHansCommon,
@@ -157,6 +162,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: zhHansUi,
     squads: zhHansSquads,
     billing: zhHansBilling,
+    knowledge: zhHansKnowledge,
   },
   ko: {
     common: koCommon,
@@ -184,6 +190,7 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: koUi,
     squads: koSquads,
     billing: koBilling,
+    knowledge: koKnowledge,
   },
   ja: {
     common: jaCommon,
@@ -211,5 +218,6 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     ui: jaUi,
     squads: jaSquads,
     billing: jaBilling,
+    knowledge: jaKnowledge,
   },
 };

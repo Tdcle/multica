@@ -184,6 +184,19 @@ export class TestApiClient {
     }
   }
 
+  /** Add an isolated E2E account without sending a real invitation email. */
+  async addWorkspaceMember(email: string, role: "admin" | "member" = "member") {
+    if (!this.workspaceId) throw new Error("Workspace fixture is not initialized");
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      const account = await client.query<{ id: string }>('SELECT id FROM "user" WHERE email = $1', [email]);
+      if (!account.rows[0]) throw new Error("Member fixture account is not initialized");
+      await client.query("INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [this.workspaceId, account.rows[0].id, role]);
+      return account.rows[0].id;
+    } finally { await client.end(); }
+  }
+
   async createIssue(title: string, opts?: Record<string, unknown>) {
     const res = await this.authedFetch("/api/issues", {
       method: "POST",

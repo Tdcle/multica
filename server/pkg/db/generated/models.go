@@ -863,6 +863,37 @@ type IssueViewPreference struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type KnowledgeExtraction struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	IssueID        pgtype.UUID        `json:"issue_id"`
+	IssueRevision  int64              `json:"issue_revision"`
+	InstanceID     string             `json:"instance_id"`
+	TeamID         string             `json:"team_id"`
+	MemoryAgentID  string             `json:"memory_agent_id"`
+	MemoryUserID   string             `json:"memory_user_id"`
+	IssueSnapshot  []byte             `json:"issue_snapshot"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	AvailableAt    pgtype.Timestamptz `json:"available_at"`
+	LeaseUntil     pgtype.Timestamptz `json:"lease_until"`
+	LeaseToken     pgtype.UUID        `json:"lease_token"`
+	SourcePayload  []byte             `json:"source_payload"`
+	UpstreamResult []byte             `json:"upstream_result"`
+	LastError      pgtype.Text        `json:"last_error"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type KnowledgeIdentity struct {
+	InstanceID        string             `json:"instance_id"`
+	UserID            pgtype.UUID        `json:"user_id"`
+	UpstreamUserID    pgtype.Text        `json:"upstream_user_id"`
+	UserKeyCiphertext []byte             `json:"user_key_ciphertext"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type LarkBindingToken struct {
 	TokenHash      string             `json:"token_hash"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -1452,6 +1483,18 @@ type WorkspaceInvitation struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+}
+
+type WorkspaceKnowledge struct {
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	TeamID        string             `json:"team_id"`
+	InstanceID    string             `json:"instance_id"`
+	Name          string             `json:"name"`
+	MemoryAgentID string             `json:"memory_agent_id"`
+	MemoryUserID  string             `json:"memory_user_id"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkspaceMcpServer struct {

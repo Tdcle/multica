@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/integrations/telegram"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
+	"github.com/multica-ai/multica/server/internal/knowledge"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -402,6 +403,32 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.TaskService.FeatureFlags = opts.FeatureFlags
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
+	if coreURL := strings.TrimSpace(os.Getenv("MULTICA_AGENT_MEMORY_CORE_URL")); coreURL != "" {
+		client, err := knowledge.NewClient(coreURL, os.Getenv("MULTICA_AGENT_MEMORY_PANEL_URL"),
+			os.Getenv("MULTICA_AGENT_MEMORY_PROXY_URL"), os.Getenv("MULTICA_AGENT_MEMORY_API_KEY"),
+			os.Getenv("MULTICA_AGENT_MEMORY_ADMIN_KEY"))
+		if err == nil {
+			err = client.ConfigureKnowledge(os.Getenv("MULTICA_AGENT_MEMORY_KNOWLEDGE_URL"), os.Getenv("MULTICA_AGENT_MEMORY_KNOWLEDGE_KEY"))
+		}
+		if err == nil {
+			var key []byte
+			key, err = secretbox.LoadKey("MULTICA_AGENT_MEMORY_SECRET_KEY")
+			if err == nil {
+				var box *secretbox.Box
+				box, err = secretbox.New(key)
+				if err == nil {
+					instanceID := strings.TrimSpace(os.Getenv("MULTICA_AGENT_MEMORY_INSTANCE_ID"))
+					if instanceID == "" {
+						instanceID = "default"
+					}
+					h.Knowledge = &knowledge.Service{Client: client, Queries: queries, Box: box, InstanceID: instanceID}
+				}
+			}
+		}
+		if err != nil {
+			slog.Error("knowledge integration disabled by invalid configuration", "error", err)
+		}
+	}
 	entitlementClient, entitlementErr := entitlement.New(entitlement.Config{
 		Enabled:      envBool("MULTICA_ENTITLEMENT_POLICY_ENABLED", false),
 		BaseURL:      strings.TrimSpace(os.Getenv("MULTICA_ENTITLEMENT_POLICY_URL")),
@@ -1213,14 +1240,24 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// using one config source instead of a parallel one.
 	realtime.SetTrustedProxies(signupConfig.TrustedProxies)
 
-	r.Use(cors.Handler(cors.Options{
+	panelAwareCORS := cors.Handler(cors.Options{
 		AllowedOrigins:   origins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   corsAllowedHeaders,
 		ExposedHeaders:   corsExposedHeaders,
 		AllowCredentials: true,
 		MaxAge:           300,
-	}))
+	})
+	r.Use(func(next http.Handler) http.Handler {
+		regular := panelAwareCORS(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/knowledge-panel/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			regular.ServeHTTP(w, r)
+		})
+	})
 
 	// Health / readiness checks
 	r.Get("/health", health.liveHandler)
@@ -1272,6 +1309,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// The authenticated /api/attachments/{id}/download route below is
 	// unchanged — this one is purely additive.
 	r.Get("/api/attachments/{id}/signed-download", h.DownloadAttachmentWithCapability)
+	r.Handle("/api/knowledge-panel/{workspaceID}/*", http.HandlerFunc(h.ServeKnowledgePanel))
 
 	// Avatar serving. Public for the same reason as the capability download
 	// above: the auth cookie is SameSite=Strict, so an auth-gated URL cannot
@@ -1775,6 +1813,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
+			r.Route("/api/knowledge", func(r chi.Router) {
+				r.Get("/", h.GetWorkspaceKnowledge)
+				r.Group(func(r chi.Router) {
+					r.Use(handler.RequireHumanActor)
+					r.Post("/binding", h.BindWorkspaceKnowledge)
+					r.Delete("/binding", h.UnbindWorkspaceKnowledge)
+					r.Get("/spaces", h.ListKnowledgeSpaces)
+					r.Post("/panel-session", h.CreateKnowledgePanelSession)
+					r.Get("/extractions", h.ListKnowledgeExtractions)
+					r.Post("/extractions/{id}/retry", h.RetryKnowledgeExtraction)
+				})
+				r.Get("/search", h.SearchKnowledge)
+				r.Get("/retrieve", h.RetrieveKnowledge)
+				r.Get("/assets", h.ListKnowledgeAssets)
+				r.Get("/assets/{id}", h.ReadKnowledgeAsset)
+			})
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {

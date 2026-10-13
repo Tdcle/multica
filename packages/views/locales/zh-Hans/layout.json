@@ -11,7 +11,8 @@
     "usage": "统计",
     "runtimes": "运行时",
     "skills": "Skills",
-    "settings": "设置"
+    "settings": "设置",
+    "knowledge": "知识库"
   },
   "tab": {
     "issue": "任务",

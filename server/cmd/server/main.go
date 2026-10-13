@@ -605,6 +605,9 @@ func main() {
 	go runRuntimeSweeper(sweepCtx, pool, queries, liveness, taskSvc, bus, runtimeReconnectGrace,
 		envDuration("MULTICA_TASK_QUEUED_TTL", defaultTaskQueuedTTL))
 	go heartbeatScheduler.Run(sweepCtx)
+	if h.Knowledge != nil {
+		go h.Knowledge.Run(sweepCtx)
+	}
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	if autopilotSvc.QuotaEnabled() {
 		go runAutopilotQuotaReconciler(autopilotCtx, autopilotSvc)

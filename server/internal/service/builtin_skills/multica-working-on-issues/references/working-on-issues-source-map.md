@@ -221,3 +221,15 @@ grep -n 'qualifyingIdents\|reference_only\|ReferenceOnly' internal/handler/githu
 grep -n 'prevIssue.Status == "backlog"\|func (h \*Handler) shouldEnqueueAgentTask' internal/handler/issue.go
 grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.go
 ```
+
+## Workspace knowledge
+
+- `server/cmd/multica/cmd_knowledge.go`: `multica knowledge search`.
+- `server/cmd/multica/cmd_knowledge.go`: paginated `knowledge list` and asset `knowledge read`.
+- `server/internal/handler/knowledge_read.go`: task-aware catalog, retrieval and read routes.
+- `server/internal/knowledge/retrieval.go`: native four-engine retrieval and asset ACL checks.
+- `server/internal/handler/knowledge.go`: caller-aware search and workspace binding.
+- `server/internal/handler/knowledge_task.go`: claim-time retrieval after workspace verification.
+- `server/internal/daemon/prompt.go`: per-turn knowledge context.
+- `server/internal/knowledge/service.go`: shared visibility / native human ACL checks.
+- `server/migrations/416_knowledge_issue_completion.up.sql`: Done transition extraction.

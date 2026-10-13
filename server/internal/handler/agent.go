@@ -351,7 +351,9 @@ type AgentTaskResponse struct {
 	// as `## Workspace Context` so every agent running in this workspace —
 	// regardless of issue / chat / autopilot / quick-create — sees the same
 	// shared context. Empty when the workspace owner hasn't set it.
-	WorkspaceContext string `json:"workspace_context,omitempty"`
+	WorkspaceContext   string `json:"workspace_context,omitempty"`
+	KnowledgeAvailable bool   `json:"knowledge_available,omitempty"`
+	KnowledgeContext   string `json:"knowledge_context,omitempty"`
 	// IssueStatuses is the workspace's ACTIVE CUSTOM status catalog (MUL-6460),
 	// injected into the agent brief so agents can see and use statuses beyond
 	// the seven built-ins. Built-ins are omitted: their keys, names, and

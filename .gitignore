@@ -78,3 +78,5 @@ data/
 # Python (agent tooling)
 __pycache__/
 *.pyc
+# Local checkout and persistent development data for the memory services.
+.agent-memory/

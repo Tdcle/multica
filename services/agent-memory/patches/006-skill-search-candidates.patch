@@ -1,0 +1,102 @@
+diff --git a/MemoryCore/src/gateway/skill-schemas.ts b/MemoryCore/src/gateway/skill-schemas.ts
+--- a/MemoryCore/src/gateway/skill-schemas.ts
++++ b/MemoryCore/src/gateway/skill-schemas.ts
+@@ -164,6 +164,7 @@
+   ...idFieldsShape,
+   query: z.string().min(1).max(2048),
+   top_k: z.number().int().min(1).max(50).optional(),
++  allowed_skill_ids: z.array(z.string().min(1).max(256)).max(100).optional(),
+   mode: z.enum(["bm25", "embedding", "hybrid"]).optional(),
+   /** When "team", the handler strips agent_id before passing to core (team-wide search, no owner filter). */
+   scope: z.enum(["team"]).optional(),
+diff --git a/MemoryCore/src/core/skill/types.ts b/MemoryCore/src/core/skill/types.ts
+--- a/MemoryCore/src/core/skill/types.ts
++++ b/MemoryCore/src/core/skill/types.ts
+@@ -333,6 +333,8 @@
+ 
+ /** `searchSkills` 的查询参数。仅命中 head + active 行。四个 ID 全部可选，传了就过滤。 */
+ export interface SearchSkillsOptions {
++  /** Restrict candidates before ranking; an empty list returns no results. */
++  allowed_skill_ids?: string[];
+   team_id?: string;
+   query: string;
+   queryEmbedding?: Float32Array;
+diff --git a/MemoryCore/src/core/skill/skill-core.ts b/MemoryCore/src/core/skill/skill-core.ts
+--- a/MemoryCore/src/core/skill/skill-core.ts
++++ b/MemoryCore/src/core/skill/skill-core.ts
+@@ -202,6 +202,7 @@
+ }
+ 
+ export interface SearchInput extends IdFields {
++  allowed_skill_ids?: string[];
+   query: string;
+   top_k?: number;
+   mode?: "bm25" | "embedding" | "hybrid";
+@@ -504,6 +505,7 @@
+ 
+   async search(input: SearchInput): Promise<SkillSearchResult[]> {
+     const opts: SearchSkillsOptions = {
++      allowed_skill_ids: input.allowed_skill_ids,
+       team_id: input.team_id,
+       query: input.query,
+       topK: input.top_k,
+diff --git a/MemoryCore/src/core/store/sqlite/skill-store.ts b/MemoryCore/src/core/store/sqlite/skill-store.ts
+--- a/MemoryCore/src/core/store/sqlite/skill-store.ts
++++ b/MemoryCore/src/core/store/sqlite/skill-store.ts
+@@ -530,6 +530,7 @@
+   //  searchSkills（仅 BM25 实现；vec 部分由 hybrid 调用方组合）
+   // ────────────────────────────────────────────────────────────────────
+   async searchSkills(opts: SearchSkillsOptions): Promise<SkillSearchResult[]> {
++    if (opts.allowed_skill_ids?.length === 0) return [];
+     const topK = Math.min(Math.max(opts.topK ?? 10, 1), 50);
+     const query = (opts.query ?? "").trim();
+     if (!query) return [];
+@@ -578,6 +579,10 @@
+       if (opts.user_id) {
+         ftsWhere += " AND user_id=?";
+         ftsArgs.push(opts.user_id);
++      }
++      if (opts.allowed_skill_ids) {
++        ftsWhere += ` AND skill_id IN (${opts.allowed_skill_ids.map(() => "?").join(",")})`;
++        ftsArgs.push(...opts.allowed_skill_ids);
+       }
+       ftsArgs.push(topK * 2);
+       ftsRows = this.db
+diff --git a/MemoryCore/src/core/store/mongodb/skill-store.ts b/MemoryCore/src/core/store/mongodb/skill-store.ts
+--- a/MemoryCore/src/core/store/mongodb/skill-store.ts
++++ b/MemoryCore/src/core/store/mongodb/skill-store.ts
+@@ -274,6 +274,7 @@
+   }
+ 
+   async searchSkills(opts: SearchSkillsOptions): Promise<SkillSearchResult[]> {
++    if (opts.allowed_skill_ids?.length === 0) return [];
+     const coll = await this.collSafe();
+     if (!coll || !this.searchIndexReady) return [];
+ 
+@@ -300,6 +301,7 @@
+           },
+         },
+       },
++      ...(opts.allowed_skill_ids ? [{ $match: { skill_id: { $in: opts.allowed_skill_ids } } }] : []),
+       { $limit: topK },
+       { $addFields: { __searchScore: { $meta: "searchScore" } } },
+     ];
+diff --git a/MemoryCore/src/core/store/tcvdb/skill-store.ts b/MemoryCore/src/core/store/tcvdb/skill-store.ts
+--- a/MemoryCore/src/core/store/tcvdb/skill-store.ts
++++ b/MemoryCore/src/core/store/tcvdb/skill-store.ts
+@@ -434,6 +434,7 @@
+   }
+ 
+   async searchSkills(opts: SearchSkillsOptions): Promise<SkillSearchResult[]> {
++    if (opts.allowed_skill_ids?.length === 0) return [];
+     await this._ensureInit();
+     if (this.degraded) return [];
+ 
+@@ -845,6 +846,7 @@
+ 
+   private _buildSearchFilter(opts: SearchSkillsOptions): string {
+     const conditions: string[] = ["is_head=1", 'status="active"'];
++    if (opts.allowed_skill_ids?.length) conditions.push("(" + opts.allowed_skill_ids.map(id => `skill_id="${this._escape(id)}"`).join(" or ") + ")");
+     if (opts.team_id) conditions.push(`team_id="${this._escape(opts.team_id)}"`);
+     if (opts.agent_id) conditions.push(`owner_agent_id="${this._escape(opts.agent_id)}"`);
+     if (opts.task_id) conditions.push(`task_id="${this._escape(opts.task_id)}"`);

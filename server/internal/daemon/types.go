@@ -98,7 +98,9 @@ type Task struct {
 	// prompt set in Settings → General). Server populates this on every claim
 	// regardless of task kind so the daemon can inject `## Workspace Context`
 	// into the brief. Empty when the owner hasn't set one.
-	WorkspaceContext string `json:"workspace_context,omitempty"`
+	WorkspaceContext   string `json:"workspace_context,omitempty"`
+	KnowledgeAvailable bool   `json:"knowledge_available,omitempty"`
+	KnowledgeContext   string `json:"knowledge_context,omitempty"`
 	// IssueStatuses mirrors the claim payload's active CUSTOM status catalog
 	// (MUL-6460): key/name/category/description per status, already in catalog
 	// order. Rendered into the brief's status-command line; empty (including on

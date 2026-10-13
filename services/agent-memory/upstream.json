@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/TencentCloud/TencentDB-Agent-Memory.git",
+  "revision": "badbd2179d06f4e0e1f2133bd3482880beab8a02",
+  "license": "MIT",
+  "patches": [
+    "patches/001-conversation-idempotency.patch",
+    "patches/002-skill-extraction-receipts.patch",
+    "patches/003-knowledge-service-entrypoints.patch",
+    "patches/004-acl-resource-lookup.patch",
+    "patches/005-proxy-auth-service-credential.patch",
+    "patches/006-skill-search-candidates.patch",
+    "patches/007-panel-workspace-embed.patch",
+    "patches/008-skill-source-preservation.patch"
+  ]
+}

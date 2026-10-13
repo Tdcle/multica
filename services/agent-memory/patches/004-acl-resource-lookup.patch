@@ -1,0 +1,42 @@
+diff --git a/MemoryCore/src/metadata/router/v3-meta-router.ts b/MemoryCore/src/metadata/router/v3-meta-router.ts
+index 8da83ed..9eceabe 100644
+--- a/MemoryCore/src/metadata/router/v3-meta-router.ts
++++ b/MemoryCore/src/metadata/router/v3-meta-router.ts
+@@ -317,6 +317,7 @@ const routeTable: Record<string, Handler> = {
+     await s.revokeAclForCaller(d.id, c);
+     return OK;
+   }),
++  [`${V3_PREFIX}/acl/get`]: bind(S.aclRevokeSchema, (d, c, s) => s.getAclForCaller(d.id, c)),
+   [`${V3_PREFIX}/acl/list`]: bind(S.aclListSchema, (d, c, s) =>
+     s.listAclByAssetForCaller(d.asset_id, c, resolvePagination(d)),
+   ),
+diff --git a/MemoryCore/src/metadata/router/v3-meta-schemas.ts b/MemoryCore/src/metadata/router/v3-meta-schemas.ts
+index 01fa78a..cc2c881 100644
+--- a/MemoryCore/src/metadata/router/v3-meta-schemas.ts
++++ b/MemoryCore/src/metadata/router/v3-meta-schemas.ts
+@@ -588,6 +588,7 @@ export const V3_SCHEMAS = {
+   "/v3/meta/agent-fixed-asset/summary-by-agents": fixedAssetSummaryByAgentsSchema,
+   "/v3/meta/acl/grant": aclGrantSchema,
+   "/v3/meta/acl/revoke": aclRevokeSchema,
++  "/v3/meta/acl/get": aclRevokeSchema,
+   "/v3/meta/acl/list": aclListSchema,
+   "/v3/meta/acl/check": aclCheckSchema,
+   "/v3/meta/auth/verify": authVerifySchema,
+diff --git a/MemoryCore/src/metadata/service/metadata-service.ts b/MemoryCore/src/metadata/service/metadata-service.ts
+index f7b0f31..13bb45d 100644
+--- a/MemoryCore/src/metadata/service/metadata-service.ts
++++ b/MemoryCore/src/metadata/service/metadata-service.ts
+@@ -2176,6 +2176,13 @@ export class MetadataService {
+     return this.revokeAcl(id);
+   }
+ 
++  async getAclForCaller(id: string, ctx: V3AuthContext): Promise<AclEntity> {
++    const acl = await this.store.getAclById(id);
++    if (!acl) throw new MetadataError("acl_not_found", `acl not found: ${id}`);
++    await this.assertCallerIsAssetOwner(ctx, acl.asset_id);
++    return acl;
++  }
++
+   async listAclByAssetForCaller(
+     assetId: string,
+     ctx: V3AuthContext,
