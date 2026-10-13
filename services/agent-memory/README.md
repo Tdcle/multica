@@ -166,7 +166,10 @@ Actual service verification has passed: Done/custom-Done/reopen/rollback semanti
 Chat plus Skill extraction and sharing, separate producer/reader execution, Core
 crash/restart and failed-archive recovery, native Wiki compilation/read/search,
 CodeGraph indexing/search/delete, scoped panel operations, private/shared Skill ACLs,
-and membership/role revocation. The extended batch test remains under verification.
+and membership/role revocation. The extended test passed with 503 frozen records
+retained in full across six Chat chunks and four native Skill archives,
+including Core crash/restart, lost-archive restoration and repeated retry. Native
+L0–L3 reads also passed; L2/L3 generation remains governed by upstream policies.
 
 The public Proxy checkout's full TypeScript check currently fails on the absent
 optional `@context-proxy/cost-guard` module. Local SQLite startup and authenticated
