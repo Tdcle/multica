@@ -49,7 +49,7 @@ WHERE id=$1 AND workspace_id=$2 AND status<>'ready' RETURNING *;
 
 -- name: ClaimAgentMemoryWork :one
 WITH candidate AS (
-    SELECT id FROM agent_memory WHERE status IN ('pending','ready','deleting') AND available_at<=now()
+    SELECT id FROM agent_memory WHERE status IN ('pending','ready','failed','deleting') AND available_at<=now()
     AND (lease_until IS NULL OR lease_until<now()) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
 )
 UPDATE agent_memory m SET lease_token=gen_random_uuid(),lease_until=now()+interval '2 minutes',updated_at=now()
@@ -62,7 +62,7 @@ UPDATE agent_memory SET status=$3,instance_id=$4,team_id=$5,native_agent_id=$6,n
 WHERE id=$1 AND lease_token=$2;
 
 -- name: DeleteAgentMemory :exec
-DELETE FROM agent_memory WHERE id=$1 AND workspace_id=$2 AND lease_token=$3;
+DELETE FROM agent_memory WHERE id=$1 AND workspace_id=$2 AND lease_token IS NOT DISTINCT FROM sqlc.narg(lease_token)::uuid;
 
 -- name: DeleteMemoriesForWorkspace :exec
 DELETE FROM agent_memory WHERE workspace_id=$1;

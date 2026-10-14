@@ -786,7 +786,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   const paths = useWorkspacePaths();
   const memories = useQuery(memoryListOptions(wsId));
   const availableMemories = useMemo(
-    () => (memories.data ?? []).filter(memory => memory.status !== "deleting"),
+    () => (memories.data ?? []).filter(memory => memory.status === "ready" || memory.status === "pending"),
     [memories.data],
   );
   const memoryByAgent = useMemo(

@@ -567,6 +567,26 @@ test('memory binding choices match native Agent names and console-created contai
   const bound=(await (await apiCall(`/api/agents/${agent.id}/memory`)).json()).binding;
   expect(bound.native_agent_id).toBe(created.agent_id);
   expect(bound.id).toBe(imported.id);
+  const survivor=await api.createAgent('Survivor');
+  await expect.poll(async()=>{const state=await (await apiCall(`/api/agents/${survivor.id}/memory`)).json();return state.binding?.status;},{timeout:45000}).toBe('ready');
+  const preserved=(await (await apiCall(`/api/agents/${survivor.id}/memory`)).json()).binding;
+  // The original console's Delete action archives a container first.
+  await native('archive',{agent_id:created.agent_id});
+  const stale=await apiCall(`/api/agents/${survivor.id}/memory`,'PUT',{memory_id:imported.id});
+  expect([404,409]).toContain(stale.status);
+  expect((await (await apiCall(`/api/agents/${survivor.id}/memory`)).json()).binding.id).toBe(preserved.id);
+  await native('archive',{agent_id:original.native_agent_id});
+  await native('delete',{agent_ids:[original.native_agent_id]});
+  for(let attempt=0;attempt<2;attempt++) {
+   const remaining=await (await apiCall('/api/memories')).json();
+   expect(remaining.some((m:{id:string})=>m.id===imported.id||m.id===original.id)).toBe(false);
+  }
+  expect((await (await apiCall(`/api/agents/${agent.id}/memory`)).json()).binding).toBeNull();
+  expect((await (await apiCall(`/api/agents/${agent.id}`)).json()).archived_at).toBeNull();
+  await page.reload();await expect(cell).toHaveText('Not bound');await cell.click();
+  await expect(page.getByRole('menuitem',{name:'Renamed console memory',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('menuitem',{name:'Native writer',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('menuitem',{name:'Survivor',exact:true})).toBeVisible();
  } finally {
   await apiCall(`/api/workspaces/${workspace.id}`,'DELETE');
  }

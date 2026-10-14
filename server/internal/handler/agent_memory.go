@@ -207,11 +207,7 @@ func (h *Handler) BindAgentMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to read binding")
 		return
 	}
-	if old.MemoryID.Valid {
-		if old.MemoryID == next {
-			writeJSON(w, 200, map[string]any{"updated": true})
-			return
-		}
+	if old.MemoryID.Valid && old.MemoryID != next {
 		if _, err = q.LockAgentMemory(r.Context(), db.LockAgentMemoryParams{ID: old.MemoryID, WorkspaceID: agent.WorkspaceID}); err != nil {
 			writeError(w, 500, "failed to lock current memory")
 			return
@@ -235,10 +231,31 @@ func (h *Handler) BindAgentMemory(w http.ResponseWriter, r *http.Request) {
 		if !h.memoryManager(w, r, memory) {
 			return
 		}
-		if memory.Status == "deleting" {
-			writeError(w, 409, "memory is being deleted")
+		if memory.Status != "ready" && memory.Status != "pending" {
+			writeError(w, 409, "memory is unavailable")
 			return
 		}
+		if memory.Status == "ready" {
+			if h.Knowledge == nil {
+				writeError(w, 503, "memory service is unavailable")
+				return
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			available, err := h.Knowledge.NativeMemoryAvailable(ctx, memory)
+			cancel()
+			if err != nil {
+				writeError(w, 503, "could not verify memory availability")
+				return
+			}
+			if !available {
+				writeError(w, 409, "memory was removed from the native console; refresh the list")
+				return
+			}
+		}
+	}
+	if next.Valid && old.MemoryID == next {
+		writeJSON(w, 200, map[string]any{"updated": true})
+		return
 	}
 	if err = q.UnbindAgentMemory(r.Context(), db.UnbindAgentMemoryParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID}); err != nil {
 		writeError(w, 500, "failed to detach memory")

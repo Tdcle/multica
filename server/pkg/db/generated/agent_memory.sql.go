@@ -53,7 +53,7 @@ func (q *Queries) CancelMissingMemoryExtractions(ctx context.Context, memoryID p
 
 const claimAgentMemoryWork = `-- name: ClaimAgentMemoryWork :one
 WITH candidate AS (
-    SELECT id FROM agent_memory WHERE status IN ('pending','ready','deleting') AND available_at<=now()
+    SELECT id FROM agent_memory WHERE status IN ('pending','ready','failed','deleting') AND available_at<=now()
     AND (lease_until IS NULL OR lease_until<now()) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
 )
 UPDATE agent_memory m SET lease_token=gen_random_uuid(),lease_until=now()+interval '2 minutes',updated_at=now()
@@ -121,7 +121,7 @@ func (q *Queries) CreateAgentMemory(ctx context.Context, arg CreateAgentMemoryPa
 }
 
 const deleteAgentMemory = `-- name: DeleteAgentMemory :exec
-DELETE FROM agent_memory WHERE id=$1 AND workspace_id=$2 AND lease_token=$3
+DELETE FROM agent_memory WHERE id=$1 AND workspace_id=$2 AND lease_token IS NOT DISTINCT FROM $3::uuid
 `
 
 type DeleteAgentMemoryParams struct {
