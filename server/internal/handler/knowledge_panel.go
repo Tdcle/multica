@@ -389,8 +389,13 @@ func (h *Handler) proxyKnowledgePanelAPI(w http.ResponseWriter, r *http.Request,
 }
 
 func (h *Handler) scopeKnowledgePanelRequest(r *http.Request, caller knowledgePanelCaller, p string, body map[string]any) error {
+	for _, prefix := range []string{"/api/v1/task/", "/api/v1/meta/task/", "/api/v1/meta/task-agent/", "/api/v1/meta/participation-log/"} {
+		if strings.HasPrefix(p, prefix) {
+			return errors.New("tasks are managed in Multica")
+		}
+	}
 	allowed := false
-	for _, prefix := range []string{"/api/v1/meta/", "/api/v1/knowledge/", "/api/v1/skill/", "/api/v1/chat-memory/", "/api/v1/agent-overview/", "/api/v1/agent/", "/api/v1/task/", "/api/v1/analytics/"} {
+	for _, prefix := range []string{"/api/v1/meta/", "/api/v1/knowledge/", "/api/v1/skill/", "/api/v1/chat-memory/", "/api/v1/agent-overview/", "/api/v1/agent/", "/api/v1/analytics/"} {
 		if strings.HasPrefix(p, prefix) {
 			allowed = true
 			break

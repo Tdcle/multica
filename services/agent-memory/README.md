@@ -62,7 +62,12 @@ engines. Web and Desktop share the Memory console and agent memory controls.
   Requests recheck workspace membership, the current binding, resource scope and
   ACLs. Credentials remain on the backend. Members and account names are read
   models of Multica; the embedded member view is read-only and API Key routes
-  are unavailable. Resource editing retains native ACLs.
+  are unavailable. Task Board and native task commands are hidden; root and stale
+  task links open Chat Memory. Multica exclusively manages task lifecycles.
+  The gateway and native Core reject managed identities' task CRUD, task-agent
+  links, participation logs and external task imports, including legacy native
+  user keys. Internal extraction and recall retain their task source identifiers.
+  Resource editing retains native ACLs.
   Wiki/CodeGraph content stores are checked separately from their metadata, so a
   metadata alias cannot redirect a reader to another space's content.
 
