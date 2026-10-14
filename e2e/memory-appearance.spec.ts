@@ -171,9 +171,19 @@ test("Memory shares Multica appearance across pages, dialogs, graph and live the
         const probe = document.createElement("span");
         probe.style.color = "var(--page-canvas)";
         document.body.append(probe);
-        const canvas = getComputedStyle(probe).color;
+        // Bundlers can serialize identical colors as LAB or OKLCH. Compare pixels.
+        const pixel = document.createElement("canvas");
+        pixel.width = pixel.height = 1;
+        const context = pixel.getContext("2d")!;
+        const sample = () => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = getComputedStyle(probe).color;
+          context.fillRect(0, 0, 1, 1);
+          return context.getImageData(0, 0, 1, 1).data.toString();
+        };
+        const canvas = sample();
         probe.style.color = "var(--foreground)";
-        const foreground = getComputedStyle(probe).color;
+        const foreground = sample();
         probe.remove();
         return {
           canvas,
