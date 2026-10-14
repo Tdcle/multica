@@ -79,18 +79,19 @@ func (s *Service) ValidateContentScope(ctx context.Context, binding db.Workspace
 // Asset metadata is projected into this public shape: provider configuration
 // and deployment credentials never become an agent-visible tool result.
 func (s *Service) Assets(ctx context.Context, binding db.WorkspaceKnowledge, identity *Identity, offset, limit int) (AssetPage, error) {
+	if identity == nil {
+		return s.boundAssets(ctx, binding, offset, limit)
+	}
+
 	reader, err := s.reader(ctx, binding, identity)
 	if err != nil {
 		return AssetPage{}, err
 	}
 	input := map[string]any{"team_id": binding.TeamID, "user_id": reader.ID, "action": "read", "offset": offset, "limit": limit}
-	if identity == nil {
-		input["visibility"] = "team"
-	}
 	page := AssetPage{Items: []Asset{}}
 	err = s.Client.Call(ctx, binding.InstanceID, "/v3/meta/asset/list-accessible", reader.Key, input, &page)
 	for _, asset := range page.Items {
-		if asset.TeamID != binding.TeamID || (identity == nil && asset.Visibility != "team") {
+		if asset.TeamID != binding.TeamID {
 			return AssetPage{}, fmt.Errorf("invalid asset scope returned by metadata")
 		}
 	}
@@ -102,11 +103,20 @@ func (s *Service) readableAsset(ctx context.Context, binding db.WorkspaceKnowled
 	if err != nil {
 		return Asset{}, reader, err
 	}
+	if identity == nil {
+		allowed, e := s.isBoundAsset(ctx, binding, reader, id)
+		if e != nil {
+			return Asset{}, reader, e
+		}
+		if !allowed {
+			return Asset{}, reader, &UpstreamError{Status: 403, Code: 403, Path: "asset/binding"}
+		}
+	}
 	var asset Asset
 	if err = s.Client.Call(ctx, binding.InstanceID, "/v3/meta/asset/get", reader.Key, map[string]any{"asset_id": id}, &asset); err != nil {
 		return asset, reader, err
 	}
-	if asset.TeamID != binding.TeamID || asset.Status == "archived" || (identity == nil && asset.Visibility != "team") {
+	if asset.TeamID != binding.TeamID || asset.Status == "archived" {
 		return Asset{}, reader, &UpstreamError{Status: 403, Code: 403, Path: "asset/read"}
 	}
 	var permission struct {
@@ -356,4 +366,49 @@ func (s *Service) Retrieve(ctx context.Context, binding db.WorkspaceKnowledge, i
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) boundAssets(ctx context.Context, binding db.WorkspaceKnowledge, offset, limit int) (AssetPage, error) {
+	reader, err := s.WriterIdentity(ctx, binding)
+	if err != nil {
+		return AssetPage{}, err
+	}
+	var page AssetPage
+	err = s.Client.Call(ctx, binding.InstanceID, "/v3/meta/agent-fixed-asset/list-with-detail", reader.Key,
+		map[string]any{"agent_id": binding.MemoryAgentID, "offset": offset, "limit": limit, "apply_visibility_filter": true}, &page)
+	if err != nil {
+		return page, err
+	}
+	page.Offset, page.Limit = offset, limit
+	if page.Items == nil {
+		page.Items = []Asset{}
+	}
+	for index, item := range page.Items {
+		if err = s.Client.Call(ctx, binding.InstanceID, "/v3/meta/asset/get", reader.Key, map[string]any{"asset_id": item.ID}, &page.Items[index]); err != nil {
+			return AssetPage{}, err
+		}
+		if page.Items[index].TeamID != binding.TeamID {
+			return AssetPage{}, fmt.Errorf("asset outside memory team")
+		}
+	}
+	return page, nil
+}
+
+func (s *Service) isBoundAsset(ctx context.Context, binding db.WorkspaceKnowledge, reader Identity, id string) (bool, error) {
+	for offset := 0; ; offset += 100 {
+		var page AssetPage
+		err := s.Client.Call(ctx, binding.InstanceID, "/v3/meta/agent-fixed-asset/list-with-detail", reader.Key,
+			map[string]any{"agent_id": binding.MemoryAgentID, "offset": offset, "limit": 100, "apply_visibility_filter": true}, &page)
+		if err != nil {
+			return false, err
+		}
+		for _, asset := range page.Items {
+			if asset.ID == id {
+				return true, nil
+			}
+		}
+		if len(page.Items) == 0 || offset+len(page.Items) >= page.Total {
+			return false, nil
+		}
+	}
 }

@@ -1,4 +1,4 @@
-# Workspace knowledge
+# Agent memory
 
 Multica runs the original TencentDB Agent Memory Core, Knowledge, Panel and Proxy
 as separate processes. `upstream.json` pins the source revision and integration
@@ -7,13 +7,26 @@ engines. Web and Desktop share the workspace Knowledge page and embedded panel.
 
 ## Behavior
 
-- A workspace owner/admin creates a knowledge space or binds an accessible native
-  team. Each native team can bind to one workspace per instance.
-- An issue entering any Done category creates a durable extraction job in the
-  same transaction. Repeated Done writes are idempotent; reopening and completing
-  creates another revision. Chat and agent execution completion do not trigger it.
+- Creating a Multica agent atomically creates and binds an independent pending
+  memory. A background worker provisions its private native Agent container.
+  Service outages never roll back agent creation; pending setup persists across
+  restarts and retries automatically. Each active memory binds to one agent.
+- The Knowledge page lists memories and keeps the complete original panel in its
+  Native panel tab. An agent's Memory tab supports detach, rebind and creation.
+  Archiving an agent preserves its detached memory by default; the confirmation
+  offers explicit permanent deletion. CLI uses `agent archive <id> --delete-memory`.
+  Deleting a memory preserves the Multica agent. Native-panel deletions are
+  reconciled automatically, normally within a minute. Deleting a container clears
+  its L0-L3 conversation history; independent Skill, Wiki and CodeGraph assets
+  retain their native lifecycle and are managed separately in the original panel.
+- An issue entering any Done category creates one durable extraction job per
+  participating agent's current memory, in the same transaction. If no execution
+  exists, its agent assignee is used. Repeated Done writes are idempotent;
+  reopening and completing creates another revision. Chat and execution completion
+  do not trigger extraction. Unbinding cancels unsubmitted work; changes wait for
+  already submitted extraction to finish, protecting its original destination.
 - The worker waits for existing executions to finish, then freezes the issue,
-  comments, execution text/tool results and final output. It redacts secrets,
+  comments, that agent's execution text/tool results and final output. It redacts secrets,
   excludes internal reasoning and retains attribution and corrections.
 - Chat delivery uses batches of 100. Skill archives respect the native 500-record
   and byte limits; batch boundaries are frozen with the source. Stable
@@ -25,11 +38,15 @@ engines. Web and Desktop share the workspace Knowledge page and embedded panel.
 - Ready means the native L1 cursor covers the source and every Skill archive has
   a durable completed receipt. Original L2/L3 processing continues asynchronously;
   its policies decide whether to generate a new scene or core memory.
-- Issue-derived assets are shared with the team. Human reads retain native private
-  assets and ACLs. Agent credentials receive team-shared assets only.
+- Extraction writes private memory and Skill assets bound to that memory's native
+  Agent. Task credentials can recall only the assets explicitly bound there,
+  including its private history. Other agents' memory never enters their prompt
+  automatically. Rebinding deliberately transfers access to existing content.
+  Workspace identity remains the native team/authorization boundary.
 - Task claims retrieve relevant Chat Memory, Skills, Wiki and CodeGraph into the
-  per-turn prompt. Private Skill candidates are excluded before native ranking.
-  On-demand CLI reads support native layers, Wiki references and code exploration.
+  per-turn prompt. Explicit native fixed-asset bindings select additional assets.
+  Human reads retain the original catalog and native ACLs. On-demand CLI reads
+  support native layers, Wiki references and code exploration.
 - The panel uses the caller's mapped native identity in an isolated frame.
   Requests recheck workspace membership, the current binding, resource scope and
   ACLs. Credentials remain on the backend. Embedded space administration follows
@@ -118,8 +135,8 @@ multica knowledge read <code-id> --query isNumber
 multica knowledge read <memory-id> --layer L2
 ```
 
-Task credentials determine the workspace; caller-supplied workspace/team IDs cannot
-change it. Search returns `items` and `warnings`. Retrieval covers the first 100
+Task credentials determine both workspace and agent memory; caller-supplied
+workspace/team/agent IDs cannot change them. Search returns `items` and `warnings`. Retrieval covers the first 100
 accessible catalog entries and also preserves the managed task memory block; use
 paginated `list` and explicit `read` for larger catalogs. Claim hydration is bounded
 by five seconds and three hits per asset family.
@@ -163,7 +180,7 @@ make up C=api
 ```
 
 Actual service verification has passed: Done/custom-Done/reopen/rollback semantics,
-Chat plus Skill extraction and sharing, separate producer/reader execution, Core
+Chat plus Skill extraction, separate producer/reader execution with explicit memory rebinding, Core
 crash/restart and failed-archive recovery, native Wiki compilation/read/search,
 CodeGraph indexing/search/delete, scoped panel operations, private/shared Skill ACLs,
 and membership/role revocation. The extended test passed with 503 frozen records

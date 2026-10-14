@@ -1,3 +1,4 @@
+import {AgentMemorySchema,AgentMemoryListSchema,AgentMemoryStateSchema,type AgentMemory,type AgentMemoryState} from "../knowledge/contracts";
 import {
   KnowledgeStateSchema, KnowledgeBindingSchema, KnowledgeSpaceListSchema,
   KnowledgeExtractionListSchema, KnowledgePanelSessionSchema,
@@ -1471,8 +1472,8 @@ export class ApiClient {
     });
   }
 
-  async archiveAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/archive`, { method: "POST" });
+  async archiveAgent(id: string, deleteMemory = false): Promise<Agent> {
+    return this.fetch(`/api/agents/${id}/archive?delete_memory=${deleteMemory}`, { method: "POST" });
   }
 
   /**
@@ -2891,6 +2892,33 @@ export class ApiClient {
   }
 
   // Workspace knowledge
+  async listAgentMemories(wsId: string): Promise<AgentMemory[]> {
+    const raw = await this.fetch<unknown>("/api/memories", { headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+    return parseWithFallback(raw, AgentMemoryListSchema, [], { endpoint: "listAgentMemories" });
+  }
+
+  async getAgentMemory(wsId: string, id: string): Promise<AgentMemoryState> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(id)}/memory`, { headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+    return parseWithFallback(raw, AgentMemoryStateSchema, { configured: false, binding: null }, { endpoint: "getAgentMemory" });
+  }
+
+  async createAgentMemory(wsId: string, name: string): Promise<AgentMemory | null> {
+    const raw = await this.fetch<unknown>("/api/memories", { method: "POST", headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" }, body: JSON.stringify({ name }) });
+    return parseWithFallback(raw, AgentMemorySchema, null, { endpoint: "createAgentMemory" });
+  }
+
+  async bindAgentMemory(wsId: string, agentId: string, memoryId: string | null): Promise<void> {
+    await this.fetch(`/api/agents/${encodeURIComponent(agentId)}/memory`, { method: "PUT", headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" }, body: JSON.stringify({ memory_id: memoryId }) });
+  }
+
+  async deleteAgentMemory(wsId: string, id: string): Promise<void> {
+    await this.fetch(`/api/memories/${encodeURIComponent(id)}`, { method: "DELETE", headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+  }
+
+  async retryAgentMemory(wsId: string, id: string): Promise<void> {
+    await this.fetch(`/api/memories/${encodeURIComponent(id)}/retry`, { method: "POST", headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
+  }
+
   async getKnowledgeState(wsId: string): Promise<KnowledgeState> {
     const data = await this.fetch<unknown>("/api/knowledge", { headers: { "X-Workspace-ID": wsId, "X-Workspace-Slug": "" } });
     return parseWithFallback(data, KnowledgeStateSchema, { configured: false, binding: null }, { endpoint: "getKnowledgeState" });

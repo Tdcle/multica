@@ -144,3 +144,11 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `CreateAgentParams` | generated from `queries/agent.sql` | typed params include nullable `Model`, `ThinkingLevel`, and `ServiceTier` |
 | `UpdateAgent` SET | generated from `queries/agent.sql` | COALESCE updates include model/thinking/service tier; dedicated clear queries restore each nullable override |
 | `UpdateAgentCustomEnv` (called by the `UpdateAgentEnv` handler) | 2652 | `SET custom_env = $2` — the only write path for env values |
+
+## Memory lifecycle
+
+- `server/migrations/419_agent_memory_spaces.up.sql`: automatic independent memory and binding.
+- `server/internal/handler/agent_memory.go`: human management, exclusive binding and deletion.
+- `server/internal/knowledge/spaces.go`: retryable native provisioning and cleanup.
+- `server/internal/handler/agent.go`: archive preserves memory by default.
+- `server/cmd/multica/cmd_agent.go`: explicit `--delete-memory` archive flag.

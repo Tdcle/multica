@@ -1,5 +1,6 @@
 "use client";
 
+import { MemoryDeletionChoice } from "../../knowledge/memory-manager";
 import { useState } from "react";
 import {
   AlertCircle,
@@ -77,6 +78,7 @@ export function AgentRowActions({
   const qc = useQueryClient();
 
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [deleteMemory, setDeleteMemory] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
   const isArchived = !!agent.archived_at;
@@ -102,11 +104,15 @@ export function AgentRowActions({
 
   const handleArchive = async () => {
     try {
-      await api.archiveAgent(agent.id);
+      await api.archiveAgent(agent.id, deleteMemory);
       invalidateAgents();
       toast.success(t(($) => $.row_actions.agent_archived_toast));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.row_actions.archive_failed_toast));
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : t(($) => $.row_actions.archive_failed_toast),
+      );
     }
   };
 
@@ -116,7 +122,11 @@ export function AgentRowActions({
       invalidateAgents();
       toast.success(t(($) => $.row_actions.agent_restored_toast));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.row_actions.restore_failed_toast));
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : t(($) => $.row_actions.restore_failed_toast),
+      );
     }
   };
 
@@ -130,7 +140,11 @@ export function AgentRowActions({
           : t(($) => $.row_actions.cancelled_tasks_toast, { count: cancelled }),
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.row_actions.cancel_failed_toast));
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : t(($) => $.row_actions.cancel_failed_toast),
+      );
     }
   };
 
@@ -167,9 +181,7 @@ export function AgentRowActions({
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           {showStop && (
-            <DropdownMenuItem
-              onClick={() => setConfirmCancel(true)}
-            >
+            <DropdownMenuItem onClick={() => setConfirmCancel(true)}>
               <Square className="h-3.5 w-3.5" />
               {t(($) => $.row_actions.cancel_all_tasks)}
             </DropdownMenuItem>
@@ -191,7 +203,10 @@ export function AgentRowActions({
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"
-                onClick={() => setConfirmArchive(true)}
+                onClick={() => {
+                  setDeleteMemory(false);
+                  setConfirmArchive(true);
+                }}
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 {t(($) => $.row_actions.archive)}
@@ -211,16 +226,21 @@ export function AgentRowActions({
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
-                {t(($) => $.row_actions.cancel_dialog_title, { name: agent.name })}
+                {t(($) => $.row_actions.cancel_dialog_title, {
+                  name: agent.name,
+                })}
               </AlertDialogTitle>
               <AlertDialogDescription>
                 {describeCancelImpact(runningCount, queuedCount, t)}
-                {runningCount > 0 && t(($) => $.row_actions.cancel_dialog_running_note)}
+                {runningCount > 0 &&
+                  t(($) => $.row_actions.cancel_dialog_running_note)}
                 {t(($) => $.row_actions.cancel_dialog_irreversible)}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>{t(($) => $.row_actions.cancel_dialog_keep)}</AlertDialogCancel>
+              <AlertDialogCancel>
+                {t(($) => $.row_actions.cancel_dialog_keep)}
+              </AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
                 onClick={() => {
@@ -250,7 +270,9 @@ export function AgentRowActions({
                 </div>
                 <div className="flex-1">
                   <AlertDialogTitle>
-                    {t(($) => $.row_actions.archive_dialog_title, { name: agent.name })}
+                    {t(($) => $.row_actions.archive_dialog_title, {
+                      name: agent.name,
+                    })}
                   </AlertDialogTitle>
                   <AlertDialogDescription>
                     {t(($) => $.row_actions.archive_dialog_description)}
@@ -258,8 +280,14 @@ export function AgentRowActions({
                 </div>
               </div>
             </AlertDialogHeader>
+            <MemoryDeletionChoice
+              checked={deleteMemory}
+              onChange={setDeleteMemory}
+            />
             <AlertDialogFooter>
-              <AlertDialogCancel>{t(($) => $.row_actions.archive_dialog_cancel)}</AlertDialogCancel>
+              <AlertDialogCancel>
+                {t(($) => $.row_actions.archive_dialog_cancel)}
+              </AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
                 onClick={() => {
@@ -279,13 +307,21 @@ export function AgentRowActions({
 
 type AgentsT = ReturnType<typeof useT<"agents">>["t"];
 
-function describeCancelImpact(running: number, queued: number, t: AgentsT): string {
+function describeCancelImpact(
+  running: number,
+  queued: number,
+  t: AgentsT,
+): string {
   if (running === 0 && queued === 0) {
     return t(($) => $.row_actions.cancel_dialog_no_tasks);
   }
   const parts: string[] = [];
-  if (running > 0) parts.push(t(($) => $.row_actions.cancel_dialog_running, { count: running }));
-  if (queued > 0) parts.push(t(($) => $.row_actions.cancel_dialog_queued, { count: queued }));
+  if (running > 0)
+    parts.push(
+      t(($) => $.row_actions.cancel_dialog_running, { count: running }),
+    );
+  if (queued > 0)
+    parts.push(t(($) => $.row_actions.cancel_dialog_queued, { count: queued }));
   return t(($) => $.row_actions.cancel_dialog_impact, {
     summary: parts.join(" + "),
     count: running + queued,

@@ -1,5 +1,6 @@
 "use client";
 
+import { MemoryDeletionChoice } from "../../knowledge/memory-manager";
 import { useState } from "react";
 import {
   AlertCircle,
@@ -37,7 +38,10 @@ import {
   memberListOptions,
   workspaceKeys,
 } from "@multica/core/workspace/queries";
-import { runtimeDisplayLabel, runtimeListOptions } from "@multica/core/runtimes";
+import {
+  runtimeDisplayLabel,
+  runtimeListOptions,
+} from "@multica/core/runtimes";
 import { useAgentPermissions } from "@multica/core/permissions";
 import { Button } from "@multica/ui/components/ui/button";
 import { CapabilityBanner } from "@multica/ui/components/common/capability-banner";
@@ -111,8 +115,9 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   // still-visible list response remains authoritative in either case.
   const agent =
     listAgent ?? (isForbidden || isNotFound ? null : detailQuery.data) ?? null;
-  const presence: AgentPresenceDetail | null =
-    agent ? presenceMap.get(agent.id) ?? null : null;
+  const presence: AgentPresenceDetail | null = agent
+    ? (presenceMap.get(agent.id) ?? null)
+    : null;
 
   // Permission hook MUST be called unconditionally — its `agent | null`
   // signature handles the not-found / loading case internally so the early
@@ -125,6 +130,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   } = useAgentPermissions(agent, wsId);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [deleteMemory, setDeleteMemory] = useState(false);
 
   // One-shot channel: the inspector's compact Lark status row asks the
   // overview pane to focus a tab. The pane clears it after consuming.
@@ -157,9 +163,9 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       const fields: Record<string, unknown> = {};
       if (!previousAgent) return fields;
       for (const key of Object.keys(optimisticData)) {
-        fields[key] = (
-          previousAgent as unknown as Record<string, unknown>
-        )[key];
+        fields[key] = (previousAgent as unknown as Record<string, unknown>)[
+          key
+        ];
       }
       return fields;
     };
@@ -195,18 +201,26 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         );
       }
       void qc.invalidateQueries({ queryKey });
-      toast.error(e instanceof Error ? e.message : t(($) => $.detail.update_failed_toast));
+      toast.error(
+        e instanceof Error ? e.message : t(($) => $.detail.update_failed_toast),
+      );
       throw e;
     }
   };
 
   const handleArchive = async (id: string) => {
     try {
-      await api.archiveAgent(id);
+      await api.archiveAgent(id, deleteMemory);
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
       toast.success(t(($) => $.detail.agent_archived_toast));
+      return true;
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.detail.archive_failed_toast));
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : t(($) => $.detail.archive_failed_toast),
+      );
+      return false;
     }
   };
 
@@ -216,7 +230,11 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
       toast.success(t(($) => $.detail.agent_restored_toast));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.detail.restore_failed_toast));
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : t(($) => $.detail.restore_failed_toast),
+      );
     }
   };
 
@@ -229,11 +247,16 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   if (!agent && isForbidden) {
     return (
       <div className="flex flex-1 min-h-0 flex-col">
-        <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
+        <BackHeader
+          paths={paths.agents()}
+          title={t(($) => $.detail.back_to_agents)}
+        />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
           <Lock className="h-8 w-8 text-muted-foreground" />
           <div>
-            <p className="text-body font-medium">{t(($) => $.detail.no_access_title)}</p>
+            <p className="text-body font-medium">
+              {t(($) => $.detail.no_access_title)}
+            </p>
             <p className="mt-1 text-caption text-muted-foreground">
               {t(($) => $.detail.no_access_hint)}
             </p>
@@ -255,7 +278,10 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     const loadError = detailError ?? agentsError;
     return (
       <div className="flex flex-1 min-h-0 flex-col">
-        <BackHeader paths={paths.agents()} title={t(($) => $.detail.back_to_agents)} />
+        <BackHeader
+          paths={paths.agents()}
+          title={t(($) => $.detail.back_to_agents)}
+        />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
           <AlertCircle className="h-8 w-8 text-destructive" />
           <div>
@@ -299,10 +325,10 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const isArchived = !!agent.archived_at;
   const runtimeBound = isAgentRuntimeBound(agent);
   const runtime = runtimeBound
-    ? runtimes.find((r) => r.id === agent.runtime_id) ?? null
+    ? (runtimes.find((r) => r.id === agent.runtime_id) ?? null)
     : null;
   const owner = agent.owner_id
-    ? members.find((m) => m.user_id === agent.owner_id) ?? null
+    ? (members.find((m) => m.user_id === agent.owner_id) ?? null)
     : null;
 
   // Chat shares the invocation gate with assignment (MUL-3963): starting a
@@ -333,9 +359,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       toast.error(t(($) => $.detail.runtime_required_toast));
       return;
     }
-    useModalStore
-      .getState()
-      .open("quick-create-issue", { agent_id: agent.id });
+    useModalStore.getState().open("quick-create-issue", { agent_id: agent.id });
   };
 
   return (
@@ -352,7 +376,12 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         onDm={handleDm}
         onAssign={handleAssign}
         onArchive={
-          agent.system_key ? undefined : () => setConfirmArchive(true)
+          agent.system_key
+            ? undefined
+            : () => {
+                setDeleteMemory(false);
+                setConfirmArchive(true);
+              }
         }
       />
 
@@ -369,9 +398,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       {isArchived && (
         <div className="flex shrink-0 items-center gap-2 border-b bg-muted/50 px-6 py-2 text-caption text-muted-foreground">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1">
-            {t(($) => $.detail.archived_banner)}
-          </span>
+          <span className="flex-1">{t(($) => $.detail.archived_banner)}</span>
           {canEdit.allowed && (
             <Button
               variant="outline"
@@ -436,23 +463,27 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
                   {t(($) => $.detail.archive_dialog_title)}
                 </DialogTitle>
                 <DialogDescription className="text-caption">
-                  {t(($) => $.detail.archive_dialog_description, { name: agent.name })}
+                  {t(($) => $.detail.archive_dialog_description, {
+                    name: agent.name,
+                  })}
                 </DialogDescription>
               </DialogHeader>
             </div>
+            <MemoryDeletionChoice
+              checked={deleteMemory}
+              onChange={setDeleteMemory}
+            />
             <DialogFooter>
-              <Button
-                variant="ghost"
-                onClick={() => setConfirmArchive(false)}
-              >
+              <Button variant="ghost" onClick={() => setConfirmArchive(false)}>
                 {t(($) => $.detail.archive_dialog_cancel)}
               </Button>
               <Button
                 variant="destructive"
-                onClick={() => {
-                  setConfirmArchive(false);
-                  handleArchive(agent.id);
-                  navigation.push(paths.agents());
+                onClick={async () => {
+                  if (await handleArchive(agent.id)) {
+                    setConfirmArchive(false);
+                    navigation.push(paths.agents());
+                  }
                 }}
               >
                 {t(($) => $.detail.archive_dialog_confirm)}
@@ -536,7 +567,9 @@ function DetailHeader({
               <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-caption text-muted-foreground">
                 <span className="inline-flex min-w-0 items-center gap-1.5">
                   <Bot className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{agent.model || t(($) => $.pickers.model_default)}</span>
+                  <span className="truncate">
+                    {agent.model || t(($) => $.pickers.model_default)}
+                  </span>
                 </span>
                 <span className="inline-flex min-w-0 items-center gap-1.5">
                   <Server className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -549,7 +582,9 @@ function DetailHeader({
                 <VisibilityBadge value={agent.visibility} />
                 <span className="inline-flex items-center gap-1.5">
                   <Clock3 className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t(($) => $.detail.updated, { when: timeAgo(agent.updated_at) })}
+                  {t(($) => $.detail.updated, {
+                    when: timeAgo(agent.updated_at),
+                  })}
                 </span>
               </div>
             </div>

@@ -265,6 +265,12 @@ WITH
 deleted_knowledge_extractions AS (
     DELETE FROM knowledge_extraction WHERE workspace_id = $1
 ),
+deleted_agent_memory_bindings AS (
+    DELETE FROM agent_memory_binding WHERE workspace_id = $1
+),
+deleted_agent_memories AS (
+    DELETE FROM agent_memory WHERE workspace_id = $1
+),
 deleted_workspace_knowledge AS (
     DELETE FROM workspace_knowledge WHERE workspace_id = $1
 ),

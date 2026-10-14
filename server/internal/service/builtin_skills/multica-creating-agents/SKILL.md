@@ -340,6 +340,15 @@ State-changing (require an explicit instruction — do not run speculatively):
 - "`set` and `add` are interchangeable for skills." `set` replaces all
   bindings; using it when you meant `add` silently removes capabilities.
 
+## Memory lifecycle
+
+Creating or copying an agent also creates a private memory with pending setup.
+An unavailable memory service does not block creation: setup retries automatically.
+An agent has one active memory binding; memories can be detached and rebound in
+its Memory tab. Archiving preserves the detached memory unless the user explicitly
+requests `multica agent archive <id> --delete-memory`. Deleting a memory retains
+the agent. Memory management requires a human account.
+
 ## References
 
 `references/creating-agents-source-map.md` maps every contract above to its

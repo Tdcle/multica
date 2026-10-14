@@ -197,6 +197,23 @@ export class TestApiClient {
     } finally { await client.end(); }
   }
 
+  /** Register an isolated runtime and drive real agent creation through the API. */
+  async createAgent(name: string) {
+    if (!this.workspaceId) throw new Error("Workspace fixture is not initialized");
+    const daemonId = `memory-e2e-${crypto.randomUUID()}`;
+    const registered = await this.authedFetch("/api/daemon/register", {
+      method:"POST", body:JSON.stringify({workspace_id:this.workspaceId,daemon_id:daemonId,
+        cli_version:"dev",runtimes:[{name:"Memory fixture runtime",type:"codex",status:"online"}]}),
+    });
+    if(!registered.ok)throw new Error(`Runtime registration failed: ${registered.status} ${await registered.text()}`);
+    const runtimes=await (await this.authedFetch("/api/runtimes")).json();
+    const runtime=runtimes.find((item:{daemon_id:string})=>item.daemon_id===daemonId);
+    if(!runtime)throw new Error("Registered runtime missing");
+    const response=await this.authedFetch("/api/agents",{method:"POST",body:JSON.stringify({name,runtime_id:runtime.id})});
+    if(!response.ok)throw new Error(`Agent creation failed: ${response.status} ${await response.text()}`);
+    return response.json();
+  }
+
   async createIssue(title: string, opts?: Record<string, unknown>) {
     const res = await this.authedFetch("/api/issues", {
       method: "POST",

@@ -35,6 +35,7 @@ func TestKnowledgeDoneLifecycle(t *testing.T) {
 	dbfx.Comment(t, issueID, "Foreign source must not be exported", testutil.Cols{"workspace_id": foreignWorkspaceID})
 	runtimeID := dbfx.Runtime(t, "Knowledge source runtime")
 	agentID := dbfx.Agent(t, "Knowledge source agent", runtimeID)
+	dbfx.Exec(t, "UPDATE agent_memory SET status='ready',instance_id='knowledge-e2e-'||workspace_id::text,team_id='knowledge-e2e-team',native_agent_id='knowledge-e2e-agent',native_user_id='knowledge-e2e-user' WHERE initial_agent_id=$1", agentID)
 	dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID, "status": "completed"})
 	dbfx.Cleanup(t, "DELETE FROM knowledge_extraction WHERE issue_id = $1", parseUUID(issueID))
 	patch := func(status string) {
@@ -68,11 +69,11 @@ func TestKnowledgeDoneLifecycle(t *testing.T) {
 	if err != nil || len(comments) != 1 || comments[0].Content != "Workspace-owned source" {
 		t.Fatalf("source comment tenant boundary failed: %v %v", comments, err)
 	}
-	tasks, err := testHandler.Queries.ListKnowledgeSourceTasks(ctx, db.ListKnowledgeSourceTasksParams{IssueID: parseUUID(issueID), WorkspaceID: parseUUID(testWorkspaceID), CreatedAt: jobs[0].CreatedAt})
+	tasks, err := testHandler.Queries.ListKnowledgeSourceTasks(ctx, db.ListKnowledgeSourceTasksParams{IssueID: parseUUID(issueID), WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), CreatedAt: jobs[0].CreatedAt})
 	if err != nil || len(tasks) != 1 {
 		t.Fatalf("owned execution source missing: %v", err)
 	}
-	foreignTasks, err := testHandler.Queries.ListKnowledgeSourceTasks(ctx, db.ListKnowledgeSourceTasksParams{IssueID: parseUUID(issueID), WorkspaceID: parseUUID(foreignWorkspaceID), CreatedAt: jobs[0].CreatedAt})
+	foreignTasks, err := testHandler.Queries.ListKnowledgeSourceTasks(ctx, db.ListKnowledgeSourceTasksParams{IssueID: parseUUID(issueID), WorkspaceID: parseUUID(foreignWorkspaceID), AgentID: parseUUID(agentID), CreatedAt: jobs[0].CreatedAt})
 	if err != nil || len(foreignTasks) != 0 {
 		t.Fatalf("execution sources crossed workspaces: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestKnowledgeDoneLifecycle(t *testing.T) {
 	}
 	count(2)
 
-	if err := testHandler.Queries.UnbindWorkspaceKnowledge(ctx, parseUUID(testWorkspaceID)); err != nil {
+	if err := testHandler.Queries.UnbindAgentMemory(ctx, db.UnbindAgentMemoryParams{WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID)}); err != nil {
 		t.Fatal(err)
 	}
 	patch("done")
@@ -112,7 +113,10 @@ func TestKnowledgeExtractionLeaseRecovery(t *testing.T) {
 	}
 	ctx := context.Background()
 	dbfx.InsertNoID(t, "workspace_knowledge", testutil.Cols{"workspace_id": testWorkspaceID, "instance_id": "lease-e2e", "team_id": "lease-e2e-team", "name": "Lease recovery", "memory_agent_id": "lease-e2e-agent", "memory_user_id": "lease-e2e-user", "created_by": testUserID}, "workspace_id = $1", parseUUID(testWorkspaceID))
-	issueID := dbfx.Issue(t, "Knowledge lease recovery")
+	runtimeID := dbfx.Runtime(t, "Lease runtime")
+	agentID := dbfx.Agent(t, "Lease agent", runtimeID)
+	dbfx.Exec(t, "UPDATE agent_memory SET status='ready',instance_id='lease-e2e-'||workspace_id::text,team_id='lease-e2e-team',native_agent_id='lease-e2e-agent',native_user_id='lease-e2e-user' WHERE initial_agent_id=$1", agentID)
+	issueID := dbfx.Issue(t, "Knowledge lease recovery", testutil.Cols{"assignee_type": "agent", "assignee_id": agentID})
 	tx, err := testPool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

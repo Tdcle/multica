@@ -222,7 +222,7 @@ grep -n 'prevIssue.Status == "backlog"\|func (h \*Handler) shouldEnqueueAgentTas
 grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.go
 ```
 
-## Workspace knowledge
+## Agent memory
 
 - `server/cmd/multica/cmd_knowledge.go`: `multica knowledge search`.
 - `server/cmd/multica/cmd_knowledge.go`: paginated `knowledge list` and asset `knowledge read`.
@@ -231,5 +231,6 @@ grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.g
 - `server/internal/handler/knowledge.go`: caller-aware search and workspace binding.
 - `server/internal/handler/knowledge_task.go`: claim-time retrieval after workspace verification.
 - `server/internal/daemon/prompt.go`: per-turn knowledge context.
-- `server/internal/knowledge/service.go`: shared visibility / native human ACL checks.
-- `server/migrations/416_knowledge_issue_completion.up.sql`: Done transition extraction.
+- `server/internal/knowledge/service.go`: native owner identity and human ACL checks.
+- `server/migrations/419_agent_memory_spaces.up.sql`: per-agent Done transition extraction and automatic binding.
+- `server/internal/knowledge/spaces.go`: provisioning, retry and native deletion reconciliation.

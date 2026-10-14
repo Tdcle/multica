@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -2241,14 +2243,79 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	deleteMemory := r.URL.Query().Get("delete_memory")
+	if deleteMemory == "true" && isMachineCredentialActor(r) {
+		writeError(w, 403, "memory deletion requires a human account")
+		return
+	}
+	if deleteMemory != "" && deleteMemory != "true" && deleteMemory != "false" {
+		writeError(w, 400, "delete_memory must be true or false")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "failed to begin agent archive")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if _, err = tx.Exec(r.Context(), "SELECT 1 FROM agent WHERE id=$1 AND workspace_id=$2 FOR UPDATE", agent.ID, agent.WorkspaceID); err != nil {
+		writeError(w, 500, "failed to lock agent")
+		return
+	}
+	bound, err := qtx.LockAgentMemoryBinding(r.Context(), db.LockAgentMemoryBindingParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 500, "failed to lock memory binding")
+		return
+	}
+	if bound.MemoryID.Valid {
+		memory, memoryErr := qtx.LockAgentMemory(r.Context(), db.LockAgentMemoryParams{ID: bound.MemoryID, WorkspaceID: agent.WorkspaceID})
+		if memoryErr != nil {
+			writeError(w, 500, "failed to lock memory")
+			return
+		}
+		if deleteMemory == "true" {
+			if !h.memoryManager(w, r, memory) {
+				return
+			}
+			if memory.LeaseUntil.Valid && memory.LeaseUntil.Time.After(time.Now()) {
+				writeError(w, 409, "memory provisioning or deletion is running; retry after it finishes")
+				return
+			}
+		}
+		busy, e := qtx.HasActiveMemoryExtractions(r.Context(), bound.MemoryID)
+		if e != nil {
+			writeError(w, 500, "failed to check extraction")
+			return
+		}
+		if busy {
+			writeError(w, 409, "memory extraction is running; retry after it finishes")
+			return
+		}
+		if err = qtx.UnbindAgentMemory(r.Context(), db.UnbindAgentMemoryParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID}); err == nil {
+			err = qtx.CancelAgentMemoryExtractions(r.Context(), db.CancelAgentMemoryExtractionsParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
+		}
+		if err == nil && deleteMemory == "true" {
+			err = qtx.MarkAgentMemoryDeleting(r.Context(), db.MarkAgentMemoryDeletingParams{ID: bound.MemoryID, WorkspaceID: agent.WorkspaceID})
+		}
+		if err != nil {
+			writeError(w, 500, "failed to detach agent memory")
+			return
+		}
+	}
 	userID := requestUserID(r)
-	archived, err := h.Queries.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
+	archived, err := qtx.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
 		ID:         agent.ID,
 		ArchivedBy: parseUUID(userID),
 	})
 	if err != nil {
 		slog.Warn("archive agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+
+	if err = tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "failed to commit agent archive")
 		return
 	}
 

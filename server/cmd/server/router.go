@@ -421,7 +421,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					if instanceID == "" {
 						instanceID = "default"
 					}
-					h.Knowledge = &knowledge.Service{Client: client, Queries: queries, Box: box, InstanceID: instanceID}
+					h.Knowledge = &knowledge.Service{Client: client, Queries: queries, Box: box, InstanceID: instanceID, TxStarter: pool}
 				}
 			}
 		}
@@ -1948,6 +1948,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)
 				})
 			})
+
+			// Individual memories have an independent lifecycle from execution agents.
+			r.Get("/api/memories", h.ListAgentMemories)
+			r.Post("/api/memories", h.CreateAgentMemory)
+			r.Delete("/api/memories/{memoryId}", h.DeleteAgentMemory)
+			r.Post("/api/memories/{memoryId}/retry", h.RetryAgentMemory)
+			r.Get("/api/agents/{id}/memory", h.GetAgentMemory)
+			r.Put("/api/agents/{id}/memory", h.BindAgentMemory)
 
 			// Squads
 			r.Route("/api/squads", func(r chi.Router) {

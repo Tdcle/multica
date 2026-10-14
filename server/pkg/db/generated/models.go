@@ -78,6 +78,33 @@ type AgentMcpServer struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type AgentMemory struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	Name           string             `json:"name"`
+	OwnerID        pgtype.UUID        `json:"owner_id"`
+	InitialAgentID pgtype.UUID        `json:"initial_agent_id"`
+	InstanceID     string             `json:"instance_id"`
+	TeamID         string             `json:"team_id"`
+	NativeAgentID  string             `json:"native_agent_id"`
+	NativeUserID   string             `json:"native_user_id"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	LastError      pgtype.Text        `json:"last_error"`
+	AvailableAt    pgtype.Timestamptz `json:"available_at"`
+	LeaseUntil     pgtype.Timestamptz `json:"lease_until"`
+	LeaseToken     pgtype.UUID        `json:"lease_token"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentMemoryBinding struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	MemoryID    pgtype.UUID        `json:"memory_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type AgentRuntime struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -864,25 +891,28 @@ type IssueViewPreference struct {
 }
 
 type KnowledgeExtraction struct {
-	ID             pgtype.UUID        `json:"id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	IssueID        pgtype.UUID        `json:"issue_id"`
-	IssueRevision  int64              `json:"issue_revision"`
-	InstanceID     string             `json:"instance_id"`
-	TeamID         string             `json:"team_id"`
-	MemoryAgentID  string             `json:"memory_agent_id"`
-	MemoryUserID   string             `json:"memory_user_id"`
-	IssueSnapshot  []byte             `json:"issue_snapshot"`
-	Status         string             `json:"status"`
-	Attempts       int32              `json:"attempts"`
-	AvailableAt    pgtype.Timestamptz `json:"available_at"`
-	LeaseUntil     pgtype.Timestamptz `json:"lease_until"`
-	LeaseToken     pgtype.UUID        `json:"lease_token"`
-	SourcePayload  []byte             `json:"source_payload"`
-	UpstreamResult []byte             `json:"upstream_result"`
-	LastError      pgtype.Text        `json:"last_error"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	IssueID          pgtype.UUID        `json:"issue_id"`
+	IssueRevision    int64              `json:"issue_revision"`
+	InstanceID       string             `json:"instance_id"`
+	TeamID           string             `json:"team_id"`
+	MemoryAgentID    string             `json:"memory_agent_id"`
+	MemoryUserID     string             `json:"memory_user_id"`
+	IssueSnapshot    []byte             `json:"issue_snapshot"`
+	Status           string             `json:"status"`
+	Attempts         int32              `json:"attempts"`
+	AvailableAt      pgtype.Timestamptz `json:"available_at"`
+	LeaseUntil       pgtype.Timestamptz `json:"lease_until"`
+	LeaseToken       pgtype.UUID        `json:"lease_token"`
+	SourcePayload    []byte             `json:"source_payload"`
+	UpstreamResult   []byte             `json:"upstream_result"`
+	LastError        pgtype.Text        `json:"last_error"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	MemoryID         pgtype.UUID        `json:"memory_id"`
+	BindingCreatedAt pgtype.Timestamptz `json:"binding_created_at"`
 }
 
 type KnowledgeIdentity struct {

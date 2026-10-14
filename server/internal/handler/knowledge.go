@@ -137,6 +137,20 @@ func (h *Handler) UnbindWorkspaceKnowledge(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer tx.Rollback(r.Context())
+	if _, err = tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(hashtextextended($1,19718))", workspaceID); err != nil {
+		writeError(w, 500, "failed to lock knowledge space")
+		return
+	}
+	var hasMemories bool
+	if err = tx.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM agent_memory WHERE workspace_id=$1)", parseUUID(workspaceID)).Scan(&hasMemories); err != nil {
+		writeError(w, 500, "failed to check memories")
+		return
+	}
+	if hasMemories {
+		writeError(w, 409, "remove independent memories before detaching their native team")
+		return
+	}
+
 	q := h.Queries.WithTx(tx)
 	if err := q.DeleteKnowledgeForWorkspace(r.Context(), parseUUID(workspaceID)); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to remove knowledge jobs")
@@ -226,57 +240,25 @@ func (h *Handler) RetryKnowledgeExtraction(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) SearchKnowledge(w http.ResponseWriter, r *http.Request) {
-	if !h.knowledgeConfigured(w) {
-		return
-	}
-	workspaceID := h.resolveWorkspaceID(r)
-	if _, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found"); !ok {
-		return
-	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" || len([]rune(query)) > 2048 {
-		writeError(w, http.StatusBadRequest, "query must contain 1 to 2048 characters")
+		writeError(w, 400, "query must contain 1 to 2048 characters")
 		return
 	}
-	binding, err := h.Queries.GetWorkspaceKnowledge(r.Context(), parseUUID(workspaceID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, []knowledge.Memory{})
+	binding, identity, ok := h.knowledgeReadContext(w, r)
+	if !ok {
 		return
 	}
+	if binding == nil {
+		writeJSON(w, 200, []knowledge.Memory{})
+		return
+	}
+	result, err := h.Knowledge.Retrieve(r.Context(), *binding, identity, query, "chat_memory")
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read knowledge binding")
+		h.knowledgeError(w, "search memory", err)
 		return
 	}
-	var identity *knowledge.Identity
-	if !isMachineCredentialActor(r) {
-		member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
-		if !ok {
-			return
-		}
-		user, userErr := h.Queries.GetUser(r.Context(), parseUUID(requestUserID(r)))
-		if userErr != nil {
-			h.knowledgeError(w, "read search identity", userErr)
-			return
-		}
-		caller, callerErr := h.Knowledge.IdentityFor(r.Context(), user)
-		if callerErr == nil {
-			callerErr = h.Knowledge.SyncMember(r.Context(), binding, caller, member.Role)
-		}
-		if callerErr != nil {
-			h.knowledgeError(w, "prepare search identity", callerErr)
-			return
-		}
-		identity = &caller
-	}
-	memories, err := h.Knowledge.SearchFor(r.Context(), binding, query, 10, identity)
-	if err != nil {
-		h.knowledgeError(w, "search", err)
-		return
-	}
-	if memories == nil {
-		memories = []knowledge.Memory{}
-	}
-	writeJSON(w, http.StatusOK, memories)
+	writeJSON(w, 200, result.Items)
 }
 
 func (h *Handler) knowledgeError(w http.ResponseWriter, operation string, err error) {

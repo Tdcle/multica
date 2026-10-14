@@ -53,6 +53,7 @@ func (s *Service) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 		}
+		s.runMemoryWork(ctx)
 		job, err := s.Queries.ClaimKnowledgeExtraction(ctx)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
@@ -99,13 +100,20 @@ func (s *Service) process(ctx context.Context, job db.KnowledgeExtraction) (stri
 			return "", receipt, 0, err
 		}
 	}
-	binding, err := s.Queries.GetWorkspaceKnowledge(ctx, job.WorkspaceID)
+	current, err := s.Queries.GetAgentMemoryBinding(ctx, db.GetAgentMemoryBindingParams{WorkspaceID: job.WorkspaceID, AgentID: job.AgentID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "cancelled", receipt, 0, nil
+	}
 	if err != nil {
 		return "", receipt, 0, err
 	}
-	if binding.TeamID != job.TeamID || binding.InstanceID != job.InstanceID || binding.MemoryAgentID != job.MemoryAgentID {
-		return "failed", receipt, 0, fmt.Errorf("knowledge binding changed before extraction")
+	if current.AgentMemory.ID != job.MemoryID || !current.BindingCreatedAt.Time.Equal(job.BindingCreatedAt.Time) {
+		return "cancelled", receipt, 0, nil
 	}
+	if current.AgentMemory.Status != "ready" {
+		return "pending", receipt, 5 * time.Second, nil
+	}
+	binding := MemoryBinding(current.AgentMemory)
 	var payload sourcePayload
 	if len(job.SourcePayload) == 0 {
 		var waiting bool
@@ -270,15 +278,6 @@ func (s *Service) process(ctx context.Context, job db.KnowledgeExtraction) (stri
 		if progress.Status != "completed" {
 			return "submitted", receipt, 15 * time.Second, nil
 		}
-		writer, err := s.WriterIdentity(ctx, binding)
-		if err != nil {
-			return "", receipt, 0, err
-		}
-		for _, skillID := range progress.SkillIDs {
-			if err := s.Client.Call(ctx, scope.InstanceID, "/v3/meta/asset/update", writer.Key, map[string]any{"asset_id": skillID, "visibility": "team"}, nil); err != nil {
-				return "", receipt, 0, err
-			}
-		}
 		stage.Complete, stage.SkillIDs = true, progress.SkillIDs
 	}
 	return "ready", receipt, 0, nil
@@ -286,7 +285,7 @@ func (s *Service) process(ctx context.Context, job db.KnowledgeExtraction) (stri
 
 func (s *Service) collect(ctx context.Context, job db.KnowledgeExtraction) (sourcePayload, bool, error) {
 	payload := sourcePayload{Version: 2, SessionID: "multica-" + util.UUIDToString(job.ID)}
-	tasks, err := s.Queries.ListKnowledgeSourceTasks(ctx, db.ListKnowledgeSourceTasksParams{IssueID: job.IssueID, CreatedAt: job.CreatedAt, WorkspaceID: job.WorkspaceID})
+	tasks, err := s.Queries.ListKnowledgeSourceTasks(ctx, db.ListKnowledgeSourceTasksParams{IssueID: job.IssueID, CreatedAt: job.CreatedAt, WorkspaceID: job.WorkspaceID, AgentID: job.AgentID})
 	if err != nil {
 		return payload, false, err
 	}
