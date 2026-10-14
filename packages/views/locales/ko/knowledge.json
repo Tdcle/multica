@@ -1,7 +1,7 @@
 {
   "title": "Memory",
   "reloadPanel": "패널 새로고침",
-  "description": "각 에이전트는 독립 메모리를 가집니다. 연결 해제된 메모리는 다시 연결할 수 있습니다.",
+  "description": "각 에이전트에는 전용 메모리가 자동 생성됩니다. 여러 에이전트가 하나의 메모리를 공유할 수도 있습니다.",
   "create": "공간 만들기",
   "bind": "기존 공간 연결",
   "name": "공간 이름",
@@ -31,7 +31,7 @@
   "revision": "수정 {{revision}}",
   "memories": "메모리",
   "nativePanel": "관리 패널",
-  "memoryDescription": "각 에이전트는 독립 메모리를 가집니다. 연결 해제된 메모리는 다시 연결할 수 있습니다.",
+  "memoryDescription": "각 에이전트에는 전용 메모리가 자동 생성됩니다. 여러 에이전트가 하나의 메모리를 공유할 수도 있습니다.",
   "memoryReady": "준비됨",
   "memoryPending": "준비 대기",
   "memoryDeleting": "삭제 중",
@@ -44,10 +44,11 @@
   "changeMemory": "메모리 변경",
   "detachMemory": "메모리 연결 해제",
   "deleteMemory": "메모리 삭제",
-  "changeMemoryDescription": "연결되지 않은 메모리를 선택하세요. 기존 내용은 원래 메모리에 남습니다.",
+  "changeMemoryDescription": "연결할 메모리를 선택하세요. 다른 에이전트와 공유할 수 있습니다.",
   "detachMemoryDescription": "이 메모리 연결을 해제할까요? 내용은 보존되며 추출과 검색이 중지됩니다.",
-  "deleteMemoryDescription": "“{{name}}” 및 대화 메모리를 영구 삭제할까요? 실행 에이전트는 보존됩니다. 독립적인 Skill, Wiki, CodeGraph 자산은 원본 패널에서 계속 관리합니다。",
+  "deleteMemoryDescription": "“{{name}}” 및 대화 기억을 영구 삭제할까요? 사용 중인 모든 에이전트의 연결이 해제됩니다. 독립 Skill, Wiki, CodeGraph 자산은 기본 패널에서 관리됩니다.",
   "deleteBoundMemory": "연결된 메모리도 영구 삭제",
-  "keepMemoryDescription": "선택하지 않으면 내용을 보존하고 다시 연결할 수 있습니다.",
-  "cancelled": "취소됨"
+  "keepMemoryDescription": "선택하지 않으면 기억 내용이 유지됩니다. 다른 에이전트가 사용 중인 공유 메모리는 유지해야 합니다.",
+  "cancelled": "취소됨",
+  "notBound": "연결 안 됨"
 }

@@ -250,6 +250,7 @@ test.describe("connected knowledge services", () => {
     );
     await api.markUserOnboarded();
     const agent = await api.createAgent("Column agent");
+    const teammate = await api.createAgent("Teammate");
     await page.addInitScript((token) => {
       if (window.self !== window.top) return;
       localStorage.setItem("multica_token", token);
@@ -279,13 +280,27 @@ test.describe("connected knowledge services", () => {
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await expect(page.getByRole("menuitem")).toHaveCount(1);
       await page.getByRole("menuitem", { name: "Detach memory", exact: true }).click();
-      await expect(cell).toHaveText("Bind memory");
+      await expect(cell).toHaveText("Not bound");
+      await expect(cell.locator(".text-destructive")).toBeVisible();
       const detached = await call(api, workspace.id, "/api/memories");
       const memories = await detached.json();
       expect(memories.find((memory: { name: string }) => memory.name === "Column agent"))
         .toMatchObject({ agent_id: null });
       await cell.click();
-      await page.getByRole("menuitem", { name: "Bind memory", exact: true }).hover();
+      await expect(page.getByRole("menuitem", { name: "Bind memory", exact: true })).toHaveCount(0);
+      await page.getByRole("menuitem", { name: "Teammate", exact: true }).click();
+      await expect(cell).toHaveText("Teammate");
+      const teammateCell = page.getByRole("button", { name: "Teammate Memory", exact: true });
+      await expect(teammateCell).toHaveText("Teammate");
+      const teammateState = await call(api, workspace.id, `/api/agents/${teammate.id}/memory`);
+      const sharedId = (await teammateState.json()).binding.id;
+      const agentState = await call(api, workspace.id, `/api/agents/${agent.id}/memory`);
+      expect((await agentState.json()).binding.id).toBe(sharedId);
+      await cell.click();
+      await page.getByRole("menuitem", { name: "Detach memory", exact: true }).click();
+      await expect(cell).toHaveText("Not bound");
+      await expect(teammateCell).toHaveText("Teammate");
+      await cell.click();
       await page.getByRole("menuitem", { name: "Column agent", exact: true }).click();
       await expect(cell).toHaveText("Column agent");
       await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -320,11 +335,19 @@ test.describe("connected knowledge services", () => {
       await remove.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.keyboard.press("Escape");
       await expect(library).not.toBeVisible();
+      const compatible = await (await call(api, workspace.id, "/api/memories")).json();
+      for (const memory of compatible) delete memory.agent_ids;
+      await page.route("**/api/memories", (route) => route.fulfill({
+        status: 200, contentType: "application/json", body: JSON.stringify(compatible),
+      }));
+      await page.reload();
+      await expect(cell).toHaveText("Column agent");
+      await page.unroute("**/api/memories");
       await page.route("**/api/memories", (route) =>
         route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({ items: "invalid" }),
+          body: JSON.stringify([{ ...compatible[0], agent_ids: "invalid" }]),
         }),
       );
       await page.reload();

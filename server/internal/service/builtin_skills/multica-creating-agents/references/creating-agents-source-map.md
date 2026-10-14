@@ -148,7 +148,9 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 ## Memory lifecycle
 
 - `server/migrations/419_agent_memory_spaces.up.sql`: automatic independent memory and binding.
-- `server/internal/handler/agent_memory.go`: human management, exclusive binding and deletion.
+- `server/internal/handler/agent_memory.go`: human management, shared bindings and deletion; shared memory cannot be deleted while archiving one of its agents.
 - `server/internal/knowledge/spaces.go`: retryable native provisioning and cleanup.
 - `server/internal/handler/agent.go`: archive preserves memory by default.
 - `server/cmd/multica/cmd_agent.go`: explicit `--delete-memory` archive flag.
+
+- `server/migrations/425_shared_memory_lookup.up.sql` and `426_shared_memory_bindings.up.sql`: shared memory bindings retain per-agent uniqueness. Rolling back the unique memory index requires detaching additional consumers first; the migration fails rather than removing bindings.
