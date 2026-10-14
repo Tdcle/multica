@@ -23,6 +23,7 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
   const directory = await mkdtemp(join(tmpdir(), 'multica-skill-migration-'));
   const backup = join(directory, 'backup.json');
   let nativeTeam: string | undefined;
+  let nativeSkill: string | undefined;
   try {
     const provision = await call('/api/knowledge/binding', 'POST', { name: 'Memory Skills' });
     expect(provision.status, await provision.clone().text()).toBe(201);
@@ -39,7 +40,7 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
     const name = 'deployment-recovery';
     const marker = `recovery-${suffix}`;
     const content = `---\nname: ${name}\ndescription: Deployment recovery procedure\n---\n\n# Recovery\nUse ${marker} to recover deployments.\n`;
-    const file = '# Recovery reference\nPreserve Unicode: 团队经验 🧠\n';
+    const file = '# Recovery reference\nPreserve Unicode: 团队经验 🧠\n' + 'Large resource content.\n'.repeat(60000);
     const created = await call('/api/skills', 'POST', { name, description: 'Deployment recovery procedure', content, files: [{ path: 'references/recovery.md', content: file }] });
     expect(created.status, await created.clone().text()).toBe(201);
     const oldID = (await created.json()).id;
@@ -51,10 +52,21 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
     expect(JSON.parse((await runMigration()).stdout)).toMatchObject({ skills: 0, dryRun: true });
     const receipt = JSON.parse(await readFile(backup + '.receipt.json', 'utf8'));
     const skillID = receipt.skills[0].nativeID;
+    nativeSkill = skillID;
     const detail = await panel('skill/get', { team_id: binding.team_id, skill_id: skillID });
     expect((await detail.json()).data).toMatchObject({ content, owner_agent_id: '', owner_user_id: nativeUser });
     const asset = await panel('meta/asset/get', { asset_id: skillID });
     expect((await asset.json()).data).toMatchObject({ visibility: 'team', team_id: binding.team_id });
+    // Exercise the console gateway above its former 8 MiB limit, within native resource limits.
+    const large = 'x'.repeat(4_300_000);
+    const bundle = await panel('skill/create', { user_id: nativeUser, team_id: binding.team_id,
+      name: 'large-team-bundle', content: '---\nname: large-team-bundle\ndescription: Large import fixture\n---\nBundle fixture.',
+      resources: ['a.md', 'b.md'].map(path => ({ path, content: large, encoding: 'utf-8' })),
+    });
+    expect(bundle.status, await bundle.clone().text()).toBe(200);
+    const bundleResult = await bundle.json();
+    expect(bundleResult.code).toBe(0);
+    expect((await panel('skill/delete', { team_id: binding.team_id, skill_id: bundleResult.data.skill_id })).status).toBe(200);
     // Native team import works before any agent exists; no artificial owner-agent is created.
     expect((await panel('meta/agent/list', { team_id: binding.team_id })).status).toBe(200);
     const taskTokens: string[] = [];
@@ -145,6 +157,14 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
   } finally {
     await call(`/api/workspaces/${workspace.id}`, 'DELETE');
     if (nativeTeam) {
+      if (nativeSkill) {
+        const removed = await fetch(process.env.MULTICA_AGENT_MEMORY_CORE_URL + '/v3/skill/delete', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + process.env.MULTICA_AGENT_MEMORY_API_KEY,
+            'Content-Type': 'application/json', 'X-Tdai-Service-Id': process.env.MULTICA_AGENT_MEMORY_INSTANCE_ID || 'default' },
+          body: JSON.stringify({ team_id: nativeTeam, skill_id: nativeSkill }),
+        });
+        expect(removed.status).toBe(200);
+      }
       const native = async (action: string, body: unknown) => {
         const response = await fetch(process.env.MULTICA_AGENT_MEMORY_CORE_URL + '/v3/meta/' + action, {
           method: 'POST', headers: { Authorization: 'Bearer ' + process.env.MULTICA_AGENT_MEMORY_API_KEY,

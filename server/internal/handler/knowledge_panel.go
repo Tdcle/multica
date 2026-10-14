@@ -299,7 +299,12 @@ func (h *Handler) proxyKnowledgePanelAPI(w http.ResponseWriter, r *http.Request,
 	}
 	body := map[string]any{}
 	if r.Method == http.MethodPost {
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&body); (err != nil && !errors.Is(err, io.EOF)) || body == nil {
+		limit := int64(8 << 20)
+		if p == "/api/v1/skill/create" || p == "/api/v1/skill/files/write" {
+			// Native bundles allow 50 MiB of resources plus JSON/base64 overhead.
+			limit = 72 << 20
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit)).Decode(&body); (err != nil && !errors.Is(err, io.EOF)) || body == nil {
 			writeError(w, 400, "invalid panel request")
 			return
 		}

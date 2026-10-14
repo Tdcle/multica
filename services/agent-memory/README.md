@@ -260,3 +260,9 @@ rows, conflicting team names and source changes. After an interrupted import,
 retry with the same backup path: source IDs in native metadata recover accepted
 creates without duplication. Backups and receipts are private files; protect
 them as application data.
+
+Skill create/file-write requests allow 72 MiB at both the Core and Multica
+console gateway, covering the native 50 MiB resource bundle plus JSON/base64
+overhead. Other routes retain their existing request limits. This avoids
+rejecting otherwise valid directory imports or migrations at the default
+1 MiB Core parser limit.
