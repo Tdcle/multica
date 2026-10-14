@@ -1,0 +1,376 @@
+diff --git a/MemoryPanel/web/src/i18n/en-US.ts b/MemoryPanel/web/src/i18n/en-US.ts
+index f0b9002..c5db03b 100644
+--- a/MemoryPanel/web/src/i18n/en-US.ts
++++ b/MemoryPanel/web/src/i18n/en-US.ts
+@@ -597,9 +597,6 @@ export const enUS = {
+   'skills.count': '{{count}} items',
+   'skills.noAgent': 'No Agent Available',
+   'skills.fork': 'Fork (writable)',
+-  'skills.fork.tooltip.fixed': 'Please select a skill in the "Team" or "My Assets" view',
+-  'skills.fork.tooltip.team.empty': 'Please select a skill first',
+-  'skills.fork.tooltip.personal.empty': 'Please select a skill first',
+   'skills.import': 'Import Skill',
+   'skills.import.tooltip.noAgent': 'No agent in the current team. Please create an agent first.',
+   'skills.export': 'Export Skill',
+@@ -652,13 +649,8 @@ export const enUS = {
+   'skills.detail.saveSuccess': 'Skill updated',
+   'skills.detail.emptyContent': 'Content cannot be empty',
+   // —— File management (writeSkillFiles / removeSkillFiles) ——
+-  'skills.detail.addFile': 'Add file',
+   'skills.detail.deleteFile': 'Delete',
+   'skills.detail.editFile': 'Edit',
+-  'skills.detail.newFileTitle': 'Add resource file',
+-  'skills.detail.filePathLabel': 'File path',
+-  'skills.detail.filePathPlaceholder': 'e.g. scripts/run.sh',
+-  'skills.detail.fileContentLabel': 'File content',
+   'skills.detail.fileSaved': 'File saved',
+   'skills.detail.fileDeleted': 'File deleted',
+   'skills.detail.deleteFileConfirm': 'Delete file "{{path}}"?',
+@@ -666,7 +658,6 @@ export const enUS = {
+   'skills.detail.deleteFileOk': 'Delete',
+   'skills.detail.deleteFileCancel': 'Cancel',
+   'skills.detail.binaryEditHint': 'Binary files cannot be edited online.',
+-  'skills.detail.filePathRequired': 'Please enter a file path',
+   // —— Version history (listSkillVersions) ——
+   'skills.detail.versions': 'Version history',
+   'skills.detail.versionsLoad': 'View version history',
+diff --git a/MemoryPanel/web/src/i18n/zh-CN.ts b/MemoryPanel/web/src/i18n/zh-CN.ts
+index f1ea53b..9c9cae9 100644
+--- a/MemoryPanel/web/src/i18n/zh-CN.ts
++++ b/MemoryPanel/web/src/i18n/zh-CN.ts
+@@ -583,9 +583,6 @@ export const zhCN = {
+   'skills.count': '{{count}} 条',
+   'skills.noAgent': '无可选 Agent',
+   'skills.fork': 'Fork（可写）',
+-  'skills.fork.tooltip.fixed': '请在「团队」或「我的资产分配」视图选中一条 skill',
+-  'skills.fork.tooltip.team.empty': '请先选中一条 skill',
+-  'skills.fork.tooltip.personal.empty': '请先选中一条 skill',
+   'skills.import': '导入 Skill',
+   'skills.import.tooltip.noAgent': '当前 team 暂无 agent，请先创建 agent',
+   'skills.export': '导出 Skill',
+@@ -636,13 +633,8 @@ export const zhCN = {
+   'skills.detail.saveSuccess': 'Skill 已更新',
+   'skills.detail.emptyContent': '内容不能为空',
+   // —— 文件管理（writeSkillFiles / removeSkillFiles）——
+-  'skills.detail.addFile': '新建文件',
+   'skills.detail.deleteFile': '删除',
+   'skills.detail.editFile': '编辑',
+-  'skills.detail.newFileTitle': '新建资源文件',
+-  'skills.detail.filePathLabel': '文件路径',
+-  'skills.detail.filePathPlaceholder': '如 scripts/run.sh',
+-  'skills.detail.fileContentLabel': '文件内容',
+   'skills.detail.fileSaved': '文件已保存',
+   'skills.detail.fileDeleted': '文件已删除',
+   'skills.detail.deleteFileConfirm': '确定删除文件「{{path}}」？',
+@@ -650,7 +642,6 @@ export const zhCN = {
+   'skills.detail.deleteFileOk': '删除',
+   'skills.detail.deleteFileCancel': '取消',
+   'skills.detail.binaryEditHint': '二进制文件不支持在线编辑。',
+-  'skills.detail.filePathRequired': '请填写文件路径',
+   // —— 版本历史（listSkillVersions）——
+   'skills.detail.versions': '历史版本',
+   'skills.detail.versionsLoad': '查看历史版本',
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/components/SkillDetailPane.tsx b/MemoryPanel/web/src/pages/SkillsPage/components/SkillDetailPane.tsx
+index b5b525d..c5ff5cc 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/components/SkillDetailPane.tsx
++++ b/MemoryPanel/web/src/pages/SkillsPage/components/SkillDetailPane.tsx
+@@ -1,15 +1,4 @@
+-/**
+- * SkillDetailPane — SkillsPanel 右栏，展示单条 skill 的 frontmatter、正文
+- * Markdown 与资源文件树；owner 还可在此就地编辑。
+- *
+- * 编辑能力（仅 canEdit=owner 时开放，写操作均带 expected_version 乐观锁）：
+- *   - 正文：编辑完整 SKILL.md（updateSkill）
+- *   - 资源文件：新建 / 编辑 / 删除（writeSkillFiles / removeSkillFiles）
+- *   - 版本历史：按需加载并只读查看任一历史版本（listSkillVersions + getSkill@version）
+- *
+- * 任一写操作成功后 version 会 +1，因此统一 reload() 重新拉取详情并通知父组件刷新列表，
+- * 保证下一次编辑携带的 expected_version 是最新值。
+- */
++/** Single-skill content, existing resource editing, version history and Fork. */
+ 
+ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+ import { useTranslation } from 'react-i18next';
+@@ -28,6 +17,7 @@ import {
+   type SkillSummary,
+   type ReadFileResult,
+ } from '@/lib/api/skill-api';
++import ForkSkillDialog from './ForkSkillDialog';
+ import '../styles/skill-detail.css';
+ 
+ interface FileTreeNode {
+@@ -106,6 +96,7 @@ export default function SkillDetailPane(props: {
+   skillId?: string;
+   /** 列表里已知的 skill 名（作标题）；列表未加载完时可能暂为 null，详情返回后用 view.name 兜底 */
+   skillName: string | null;
++  agents: Array<{ id: string; name: string }>;
+   /** 当前 team（写操作入参）；缺省时回退到详情里的 team_id */
+   teamId?: string;
+   /** 当前登录用户 id（写操作入参 user_id） */
+@@ -133,11 +124,7 @@ export default function SkillDetailPane(props: {
+   const [fileDraft, setFileDraft] = useState('');
+   const [fileSaving, setFileSaving] = useState(false);
+ 
+-  // 新建文件 Modal
+-  const [showNewFile, setShowNewFile] = useState(false);
+-  const [newFilePath, setNewFilePath] = useState('');
+-  const [newFileContent, setNewFileContent] = useState('');
+-  const [newFileSaving, setNewFileSaving] = useState(false);
++  const [showFork, setShowFork] = useState(false);
+ 
+   // 版本历史
+   const [showVersions, setShowVersions] = useState(false);
+@@ -175,6 +162,7 @@ export default function SkillDetailPane(props: {
+   useEffect(() => {
+     // 切换 skill 时重置所有编辑/版本态，避免残留上一条的草稿
+     setView(null);
++    setShowFork(false);
+     setEditingBody(false);
+     setVersions(null);
+     setShowVersions(false);
+@@ -318,33 +306,6 @@ export default function SkillDetailPane(props: {
+     }
+   }
+ 
+-  // ── 新建文件 ──
+-  async function createFile() {
+-    if (!currentView || !writeCtx) return;
+-    if (!newFilePath.trim()) {
+-      tea.notify.error({ description: t('skills.detail.filePathRequired') });
+-      return;
+-    }
+-    setNewFileSaving(true);
+-    try {
+-      await writeSkillFiles({
+-        ...writeCtx,
+-        skill_id: currentView.skill_id,
+-        expected_version: currentView.version,
+-        files: [{ path: newFilePath.trim(), content: newFileContent, encoding: 'utf-8' }],
+-      });
+-      tea.notify.success(t('skills.detail.fileSaved'));
+-      setShowNewFile(false);
+-      setNewFilePath('');
+-      setNewFileContent('');
+-      reload();
+-    } catch (err) {
+-      tea.notify.error(err);
+-    } finally {
+-      setNewFileSaving(false);
+-    }
+-  }
+-
+   // ── 版本历史 ──
+   async function loadVersions() {
+     if (!currentView) return;
+@@ -460,9 +421,9 @@ export default function SkillDetailPane(props: {
+                     {t('skills.detail.edit')}
+                   </Button>
+                 )}
+-                {editable && (
+-                  <Button onClick={() => setShowNewFile(true)}>{t('skills.detail.addFile')}</Button>
+-                )}
++                <Button onClick={() => setShowFork(true)} disabled={props.agents.length === 0 || !props.userId || showLoading}>
++                  {t('skills.fork')}
++                </Button>
+                 <Button
+                   onClick={() => {
+                     setShowVersions(true);
+@@ -634,50 +595,13 @@ export default function SkillDetailPane(props: {
+         </Modal>
+       )}
+ 
+-      {/* 新建文件 Modal */}
+-      {showNewFile && (
+-        <Modal
+-          visible
+-          caption={t('skills.detail.newFileTitle')}
+-          size="l"
+-          onClose={() => setShowNewFile(false)}
+-        >
+-          <Modal.Body>
+-            <div className="_memory-skill-newfile-field">
+-              <Text theme="label" parent="div">
+-                {t('skills.detail.filePathLabel')}
+-              </Text>
+-              <Input
+-                size="full"
+-                value={newFilePath}
+-                onChange={(v) => setNewFilePath(v)}
+-                placeholder={t('skills.detail.filePathPlaceholder')}
+-                className="_memory-skill-newfile-path"
+-                disabled={newFileSaving}
+-              />
+-            </div>
+-            <div className="_memory-skill-newfile-field">
+-              <Text theme="label" parent="div">
+-                {t('skills.detail.fileContentLabel')}
+-              </Text>
+-              <Input.TextArea
+-                size="full"
+-                className="_memory-skill-edit-textarea"
+-                value={newFileContent}
+-                onChange={(v) => setNewFileContent(v)}
+-                disabled={newFileSaving}
+-              />
+-            </div>
+-          </Modal.Body>
+-          <Modal.Footer>
+-            <Button type="primary" onClick={createFile} loading={newFileSaving}>
+-              {t('skills.detail.save')}
+-            </Button>
+-            <Button onClick={() => setShowNewFile(false)} disabled={newFileSaving}>
+-              {t('skills.detail.cancel')}
+-            </Button>
+-          </Modal.Footer>
+-        </Modal>
++      {showFork && currentView && (
++        <ForkSkillDialog key={currentView.skill_id} skillId={currentView.skill_id} skillName={currentView.name}
++          teamId={props.teamId || currentView.team_id} userId={props.userId ?? ''}
++          agents={props.agents} onClose={() => setShowFork(false)} onForked={() => {
++            setShowFork(false);
++            props.onChanged?.();
++          }} />
+       )}
+ 
+       {/* 版本历史列表 Modal */}
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx b/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx
+index 23dc8f3..1383589 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx
++++ b/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx
+@@ -19,7 +19,6 @@ import {
+ import { UserBadge } from '@/components/asset/UserBadge';
+ import SkillDetailPane from './SkillDetailPane';
+ import ImportSkillDialog from './ImportSkillDialog';
+-import ForkSkillDialog from './ForkSkillDialog';
+ import { TAB_I18N_KEY, useSkillsPanel, type Tab } from '../hooks/useSkillsPanel';
+ import '../styles/skills-list.css';
+ 
+@@ -51,8 +50,6 @@ export default function SkillsPanel({
+     setSelectedSkillId,
+     showImport,
+     setShowImport,
+-    showFork,
+-    setShowFork,
+     deleteLoading,
+     exportLoading,
+     visibilityMap,
+@@ -111,20 +108,6 @@ export default function SkillsPanel({
+             <Button onClick={() => setAllocating(true)} disabled={!activeTeamId || teamAgents.length === 0}>
+               {t('allocAsset.submit')}
+             </Button>
+-            {(() => {
+-              const canFork = tab === 'team' && !!selectedSkillId;
+-              const tooltip =
+-                tab === 'fixed'
+-                  ? t('skills.fork.tooltip.fixed')
+-                  : !selectedSkillId
+-                    ? t('skills.fork.tooltip.team.empty')
+-                    : undefined;
+-              return tab === 'fixed' ? null : (
+-                <Button onClick={() => setShowFork(true)} disabled={!canFork} tooltip={tooltip}>
+-                  {t('skills.fork')}
+-                </Button>
+-              );
+-            })()}
+             {(() => {
+               const canExport = !!selectedSkillId;
+               const exportTooltip = !selectedSkillId ? t('skills.export.tooltip.empty') : undefined;
+@@ -283,6 +266,7 @@ export default function SkillsPanel({
+             userId={myUserId}
+             // 编辑权限与删除一致：仅 skill 的 owner（owner_user_id === 当前用户）可编辑
+             canEdit={!!myUserId && selectedSkill?.owner_user_id === myUserId}
++            agents={teamAgents}
+             onChanged={() => void refresh()}
+           />
+         }
+@@ -311,29 +295,7 @@ export default function SkillsPanel({
+           }}
+         />
+       )}
+-      {showFork &&
+-        (() => {
+-          // Fork 弹窗的 skillId/skillName 来源：selectedSkill（列表来自 asset/list-accessible）
+-          const source = selectedSkill
+-            ? { skillId: selectedSkill.skill_id, skillName: selectedSkill.name }
+-            : null;
+-          if (!source) return null;
+-          return (
+-            <ForkSkillDialog
+-              teamId={activeTeamId ?? ''}
+-              userId={myUserId}
+-              skillId={source.skillId}
+-              skillName={source.skillName}
+-              agents={teamAgents}
+-              onClose={() => setShowFork(false)}
+-              onForked={() => {
+-                setShowFork(false);
+-                // fork 出的新副本以 `<原名>-fork-<agentId>` 落库，会作为新条目出现
+-                void refresh();
+-              }}
+-            />
+-          );
+-        })()}
++
+     </div>
+   );
+ }
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts b/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts
+index d64d7b0..e78bc91 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts
++++ b/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts
+@@ -84,7 +84,6 @@ export function useSkillsPanel() {
+   const [loading, setLoading] = useState(false);
+   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+   const [showImport, setShowImport] = useState(false);
+-  const [showFork, setShowFork] = useState(false);
+   const [deleteLoading, setDeleteLoading] = useState(false);
+   const [exportLoading, setExportLoading] = useState(false);
+   // team tab 下每条 skill 的 visibility（从 meta_assets 拿），列表徽章展示用。
+@@ -406,8 +405,6 @@ export function useSkillsPanel() {
+     setSelectedSkillId,
+     showImport,
+     setShowImport,
+-    showFork,
+-    setShowFork,
+     deleteLoading,
+     exportLoading,
+     visibilityMap,
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/styles/skill-detail.css b/MemoryPanel/web/src/pages/SkillsPage/styles/skill-detail.css
+index 26040d4..f5e447a 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/styles/skill-detail.css
++++ b/MemoryPanel/web/src/pages/SkillsPage/styles/skill-detail.css
+@@ -130,7 +130,7 @@
+   flex: 1;
+ }
+ 
+-/* 操作栏：编辑 / 新建文件 / 历史版本，靠右不换行 */
++/* Single-skill actions stay beside the selected skill title. */
+ ._memory-skill-detail-actions {
+   flex: 0 0 auto;
+   display: flex;
+@@ -197,7 +197,7 @@
+   margin-bottom: 0;
+ }
+ 
+-/* ===== 编辑态（正文 / 文件 / 新建文件）===== */
++/* Existing body and resource editing. */
+ ._memory-skill-edit-box {
+   display: flex;
+   flex-direction: column;
+@@ -223,16 +223,6 @@
+   gap: 8px;
+ }
+ 
+-._memory-skill-newfile-field + ._memory-skill-newfile-field {
+-  margin-top: 12px;
+-}
+-
+-._memory-skill-newfile-path,
+-._memory-skill-newfile-path input {
+-  width: 100%;
+-  font-family: var(--font-mono);
+-}
+-
+ /* 历史版本查看 Modal 内：附属资源与正文的间距 */
+ ._memory-skill-version-files {
+   margin-top: 16px;

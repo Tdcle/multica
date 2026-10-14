@@ -26,6 +26,7 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
   let nativeTeam: string | undefined;
   let nativeSkill: string | undefined;
   const extraSkills: string[] = [];
+  let forkedSkill: string | undefined;
   try {
     const provision = await call('/api/knowledge/binding', 'POST', { name: 'Memory Skills' });
     expect(provision.status, await provision.clone().text()).toBe(201);
@@ -134,8 +135,34 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
     await expect(frame.locator('._memory-app-shell')).toContainText(name);
     expect(page.frames().some(item => item.url().includes('#/skills'))).toBe(true);
     await expect(page.locator(`a[href="/${workspace.slug}/skills"]`)).toHaveCount(0);
+    await expect(frame.getByRole('button', { name: 'Fork (writable)', exact: true })).toHaveCount(0);
     await frame.getByText(name, { exact: true }).first().click();
     await expect(frame.getByText(marker, { exact: false })).toBeVisible();
+    // Fork belongs to the selected skill and keeps its complete content and resources.
+    await expect(frame.locator('._asset-page-header-actions').getByRole('button', { name: /Fork/ })).toHaveCount(0);
+    await expect(frame.getByRole('button', { name: 'Add file', exact: true })).toHaveCount(0);
+    const detailActions = frame.locator('._memory-skill-detail-actions');
+    await expect(detailActions.getByRole('button', { name: 'Edit', exact: true })).toBeVisible();
+    await detailActions.getByRole('button', { name: 'Fork (writable)', exact: true }).click();
+    const forkDialog = frame.getByRole('dialog');
+    await expect(forkDialog.getByRole('textbox')).toHaveValue(name);
+    const copyName = 'deployment-recovery-copy';
+    await forkDialog.getByRole('textbox').fill(copyName);
+    const forkResponse = page.waitForResponse(response => response.url().endsWith('/api/v1/skill/create') && response.request().method() === 'POST');
+    await forkDialog.getByRole('button', { name: 'Fork', exact: true }).click();
+    const copied = await (await forkResponse).json();
+    expect(copied.code).toBe(0);
+    forkedSkill = copied.data.skill_id;
+    expect(forkedSkill).toBeTruthy();
+    await expect(forkDialog).toHaveCount(0);
+    const copy = (await (await panel('skill/get', { team_id: nativeTeam, skill_id: forkedSkill })).json()).data;
+    expect(copy.name).toBe(copyName);
+    expect(copy.owner_agent_id).toBeTruthy();
+    expect(copy.content).toBe(content.replace(`name: ${name}`, `name: ${copyName}`));
+    const copyFile = await panel('skill/files/read', { team_id: nativeTeam, skill_id: forkedSkill, path: 'references/recovery.md' });
+    expect((await copyFile.json()).data.content).toBe(file);
+    expect((await (await panel('skill/get', { team_id: nativeTeam, skill_id: skillID })).json()).data.content).toBe(content);
+    await page.screenshot({ path: testInfo.outputPath('skill-detail-actions.png'), animations: 'disabled' });
     // Bulk reference allocation persists independently for each agent and retains other assets.
     for (const name of ['release-checklist', 'incident-triage']) {
       const response = await panel('skill/create', { user_id: nativeUser, team_id: nativeTeam,
@@ -245,7 +272,7 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
   } finally {
     await call(`/api/workspaces/${workspace.id}`, 'DELETE');
     if (nativeTeam) {
-      for (const nativeSkillID of [nativeSkill, ...extraSkills].filter(Boolean)) {
+      for (const nativeSkillID of [nativeSkill, forkedSkill, ...extraSkills].filter(Boolean)) {
         const removed = await fetch(process.env.MULTICA_AGENT_MEMORY_CORE_URL + '/v3/skill/delete', {
           method: 'POST', headers: { Authorization: 'Bearer ' + process.env.MULTICA_AGENT_MEMORY_API_KEY,
             'Content-Type': 'application/json', 'X-Tdai-Service-Id': process.env.MULTICA_AGENT_MEMORY_INSTANCE_ID || 'default' },
