@@ -308,6 +308,9 @@ func (h *Handler) proxyKnowledgePanelAPI(w http.ResponseWriter, r *http.Request,
 		writeError(w, 403, "resource is outside this knowledge space")
 		return
 	}
+	if h.knowledgePanelDirectory(w, r, caller, p, body) {
+		return
+	}
 	if p == "/api/v1/meta/team/list" {
 		var team map[string]any
 		if err := h.Knowledge.Client.Call(r.Context(), caller.Binding.InstanceID, "/v3/meta/team/get", caller.Identity.Key, map[string]any{"team_id": caller.Binding.TeamID}, &team); err != nil {
@@ -380,28 +383,6 @@ func (h *Handler) proxyKnowledgePanelAPI(w http.ResponseWriter, r *http.Request,
 		}
 		result, _ = json.Marshal(env)
 	}
-	if p == "/api/v1/meta/user-key/list" && response.StatusCode == 200 {
-		var envelope map[string]any
-		if err := json.Unmarshal(result, &envelope); err != nil {
-			writeError(w, 502, "invalid panel response")
-			return
-		}
-		if data, ok := envelope["data"].(map[string]any); ok {
-			filtered := []any{}
-			if items, ok := data["items"].([]any); ok {
-				for _, item := range items {
-					if key, ok := item.(map[string]any); ok && key["is_default"] != true {
-						filtered = append(filtered, item)
-					}
-				}
-			}
-			data["items"] = filtered
-			if total, ok := data["total"].(float64); ok {
-				data["total"] = max(total-1, 0)
-			}
-		}
-		result, _ = json.Marshal(envelope)
-	}
 	w.Header().Set("Content-Type", response.Header.Get("Content-Type"))
 	w.WriteHeader(response.StatusCode)
 	_, _ = w.Write(result)
@@ -419,12 +400,13 @@ func (h *Handler) scopeKnowledgePanelRequest(r *http.Request, caller knowledgePa
 		return errors.New("unsupported panel API")
 	}
 	binding := caller.Binding
-	if caller.Member.Role != "owner" && caller.Member.Role != "admin" {
-		if strings.HasPrefix(p, "/api/v1/meta/team/") && p != "/api/v1/meta/team/get" && p != "/api/v1/meta/team/list" {
-			return errors.New("workspace admin access required")
-		}
-		if strings.HasPrefix(p, "/api/v1/meta/team-member/") && p != "/api/v1/meta/team-member/get" && p != "/api/v1/meta/team-member/list" {
-			return errors.New("workspace admin access required")
+	for _, family := range []string{"user-key", "user", "team", "team-member", "config/instance"} {
+		prefix := "/api/v1/meta/" + family + "/"
+		if strings.HasPrefix(p, prefix) {
+			readOnly := family != "user-key" && (p == prefix+"get" || p == prefix+"list")
+			if !readOnly {
+				return errors.New("accounts and membership are managed in Multica")
+			}
 		}
 	}
 	if p == "/api/v1/meta/acl/revoke" {
@@ -567,16 +549,7 @@ func (h *Handler) scopeKnowledgePanelRequest(r *http.Request, caller knowledgePa
 	if strings.HasSuffix(p, "/list") || strings.HasSuffix(p, "/list-accessible") || strings.HasSuffix(p, "/listing") || strings.HasSuffix(p, "/search") || strings.HasSuffix(p, "/create") || strings.HasPrefix(p, "/api/v1/chat-memory/") || strings.HasSuffix(p, "/team-assets") || strings.HasSuffix(p, "/my-assets") || p == "/api/v1/task/list-with-agents" || strings.HasPrefix(p, "/api/v1/analytics/") {
 		body["team_id"] = binding.TeamID
 	}
-	if strings.HasPrefix(p, "/api/v1/meta/user-key/") && p != "/api/v1/meta/user-key/list" && p != "/api/v1/meta/user-key/create" {
-		keyID, _ := body["key_id"].(string)
-		var key struct {
-			Default bool `json:"is_default"`
-		}
-		if err := h.Knowledge.Client.Call(r.Context(), binding.InstanceID, "/v3/meta/user-key/get", caller.Identity.Key, map[string]any{"key_id": keyID}, &key); err != nil || key.Default {
-			return errors.New("managed integration key cannot be changed")
-		}
-	}
-	if strings.HasPrefix(p, "/api/v1/meta/user-key/") || strings.HasPrefix(p, "/api/v1/meta/config/user/") || strings.HasPrefix(p, "/api/v1/meta/user-session-default/") {
+	if strings.HasPrefix(p, "/api/v1/meta/user-session-default/") || strings.HasPrefix(p, "/api/v1/meta/config/user/") {
 		body["user_id"] = caller.Identity.ID
 	}
 	return nil

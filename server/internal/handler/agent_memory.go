@@ -231,6 +231,13 @@ func (h *Handler) BindAgentMemory(w http.ResponseWriter, r *http.Request) {
 		if !h.memoryManager(w, r, memory) {
 			return
 		}
+		// Binding delegates this memory to the agent's callers. Workspace admin
+		// inventory access alone cannot delegate somebody else's private memory
+		// to an agent owned by a different person.
+		if memory.OwnerID != parseUUID(requestUserID(r)) && memory.OwnerID != agent.OwnerID {
+			writeError(w, 403, "memory owner must authorize this binding")
+			return
+		}
 		if memory.Status != "ready" && memory.Status != "pending" {
 			writeError(w, 409, "memory is unavailable")
 			return

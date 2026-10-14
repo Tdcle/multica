@@ -62,7 +62,7 @@ func (s *Service) IdentityFor(ctx context.Context, user db.User) (Identity, erro
 	}
 	identity := Identity{ID: row.UpstreamUserID.String, Key: string(key)}
 	if row.UpstreamUserID.Valid && identity.ID != "" {
-		return identity, nil
+		return identity, s.syncDisplayName(ctx, user, identity, row.DisplayName)
 	}
 	var verified struct {
 		Valid bool `json:"valid"`
@@ -98,6 +98,9 @@ func (s *Service) IdentityFor(ctx context.Context, user db.User) (Identity, erro
 	err = s.Queries.CompleteKnowledgeIdentity(ctx, db.CompleteKnowledgeIdentityParams{
 		InstanceID: s.InstanceID, UserID: user.ID, UpstreamUserID: pgtype.Text{String: identity.ID, Valid: true},
 	})
+	if err == nil {
+		err = s.syncDisplayName(ctx, user, identity, row.DisplayName)
+	}
 	return identity, err
 }
 
@@ -245,18 +248,12 @@ func (s *Service) WriterIdentity(ctx context.Context, binding db.WorkspaceKnowle
 }
 
 func (s *Service) SyncMember(ctx context.Context, binding db.WorkspaceKnowledge, identity Identity, role string) error {
-	writer, err := s.WriterIdentity(ctx, binding)
+	writer, err := s.TeamIdentity(ctx, binding)
 	if err != nil {
 		return err
 	}
 	upstreamRole := "member"
 	if role == "owner" || role == "admin" {
-		upstreamRole = "admin"
-	}
-	// This credential also owns the automation assets and administers upstream
-	// membership. Keep that service capability when its human loses a Multica
-	// admin role; the gateway separately enforces the current human role.
-	if identity.ID == binding.MemoryUserID {
 		upstreamRole = "admin"
 	}
 	var existing struct {
@@ -274,6 +271,15 @@ func (s *Service) SyncMember(ctx context.Context, binding db.WorkspaceKnowledge,
 			return err
 		}
 	}
-	return s.Client.Call(ctx, binding.InstanceID, "/v3/meta/team-member/add", writer.Key,
+	err = s.Client.Call(ctx, binding.InstanceID, "/v3/meta/team-member/add", writer.Key,
 		map[string]any{"team_id": binding.TeamID, "user_id": identity.ID, "role": upstreamRole, "status": "active"}, nil)
+	var upstream *UpstreamError
+	if errors.As(err, &upstream) && upstream.Status == 409 {
+		// Another caller or reconciler may have applied the same desired role.
+		if readErr := s.Client.Call(ctx, binding.InstanceID, "/v3/meta/team-member/get", writer.Key,
+			map[string]any{"team_id": binding.TeamID, "user_id": identity.ID}, &existing); readErr == nil && existing.Role == upstreamRole && existing.Status == "active" {
+			return nil
+		}
+	}
+	return err
 }

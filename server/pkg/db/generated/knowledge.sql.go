@@ -15,7 +15,7 @@ const bindWorkspaceKnowledge = `-- name: BindWorkspaceKnowledge :one
 INSERT INTO workspace_knowledge (workspace_id, team_id, instance_id, name,
     memory_agent_id, memory_user_id, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING workspace_id, team_id, instance_id, name, memory_agent_id, memory_user_id, created_by, created_at, updated_at
+RETURNING workspace_id, team_id, instance_id, name, memory_agent_id, memory_user_id, created_by, created_at, updated_at, service_user_id, service_key_ciphertext
 `
 
 type BindWorkspaceKnowledgeParams struct {
@@ -49,6 +49,8 @@ func (q *Queries) BindWorkspaceKnowledge(ctx context.Context, arg BindWorkspaceK
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ServiceUserID,
+		&i.ServiceKeyCiphertext,
 	)
 	return i, err
 }
@@ -111,6 +113,20 @@ type CompleteKnowledgeIdentityParams struct {
 
 func (q *Queries) CompleteKnowledgeIdentity(ctx context.Context, arg CompleteKnowledgeIdentityParams) error {
 	_, err := q.db.Exec(ctx, completeKnowledgeIdentity, arg.InstanceID, arg.UserID, arg.UpstreamUserID)
+	return err
+}
+
+const completeKnowledgeServiceIdentity = `-- name: CompleteKnowledgeServiceIdentity :exec
+UPDATE workspace_knowledge SET service_user_id = $2 WHERE workspace_id = $1
+`
+
+type CompleteKnowledgeServiceIdentityParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ServiceUserID pgtype.Text `json:"service_user_id"`
+}
+
+func (q *Queries) CompleteKnowledgeServiceIdentity(ctx context.Context, arg CompleteKnowledgeServiceIdentityParams) error {
+	_, err := q.db.Exec(ctx, completeKnowledgeServiceIdentity, arg.WorkspaceID, arg.ServiceUserID)
 	return err
 }
 
@@ -230,7 +246,7 @@ func (q *Queries) GetKnowledgeExtractionForWorkspace(ctx context.Context, arg Ge
 }
 
 const getKnowledgeIdentity = `-- name: GetKnowledgeIdentity :one
-SELECT instance_id, user_id, upstream_user_id, user_key_ciphertext, created_at, updated_at FROM knowledge_identity WHERE instance_id = $1 AND user_id = $2
+SELECT instance_id, user_id, upstream_user_id, user_key_ciphertext, created_at, updated_at, display_name FROM knowledge_identity WHERE instance_id = $1 AND user_id = $2
 `
 
 type GetKnowledgeIdentityParams struct {
@@ -248,12 +264,13 @@ func (q *Queries) GetKnowledgeIdentity(ctx context.Context, arg GetKnowledgeIden
 		&i.UserKeyCiphertext,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getKnowledgeWriterIdentity = `-- name: GetKnowledgeWriterIdentity :one
-SELECT instance_id, user_id, upstream_user_id, user_key_ciphertext, created_at, updated_at FROM knowledge_identity
+SELECT instance_id, user_id, upstream_user_id, user_key_ciphertext, created_at, updated_at, display_name FROM knowledge_identity
 WHERE instance_id = $1 AND upstream_user_id = $2 LIMIT 1
 `
 
@@ -272,12 +289,13 @@ func (q *Queries) GetKnowledgeWriterIdentity(ctx context.Context, arg GetKnowled
 		&i.UserKeyCiphertext,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DisplayName,
 	)
 	return i, err
 }
 
 const getWorkspaceKnowledge = `-- name: GetWorkspaceKnowledge :one
-SELECT workspace_id, team_id, instance_id, name, memory_agent_id, memory_user_id, created_by, created_at, updated_at FROM workspace_knowledge WHERE workspace_id = $1
+SELECT workspace_id, team_id, instance_id, name, memory_agent_id, memory_user_id, created_by, created_at, updated_at, service_user_id, service_key_ciphertext FROM workspace_knowledge WHERE workspace_id = $1
 `
 
 func (q *Queries) GetWorkspaceKnowledge(ctx context.Context, workspaceID pgtype.UUID) (WorkspaceKnowledge, error) {
@@ -293,12 +311,14 @@ func (q *Queries) GetWorkspaceKnowledge(ctx context.Context, workspaceID pgtype.
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ServiceUserID,
+		&i.ServiceKeyCiphertext,
 	)
 	return i, err
 }
 
 const listKnowledgeBindings = `-- name: ListKnowledgeBindings :many
-SELECT workspace_id, team_id, instance_id, name, memory_agent_id, memory_user_id, created_by, created_at, updated_at FROM workspace_knowledge WHERE instance_id = $1
+SELECT workspace_id, team_id, instance_id, name, memory_agent_id, memory_user_id, created_by, created_at, updated_at, service_user_id, service_key_ciphertext FROM workspace_knowledge WHERE instance_id = $1
 `
 
 func (q *Queries) ListKnowledgeBindings(ctx context.Context, instanceID string) ([]WorkspaceKnowledge, error) {
@@ -320,6 +340,59 @@ func (q *Queries) ListKnowledgeBindings(ctx context.Context, instanceID string) 
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ServiceUserID,
+			&i.ServiceKeyCiphertext,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listKnowledgeMembers = `-- name: ListKnowledgeMembers :many
+SELECT m.user_id, m.role, m.created_at AS joined_at, u.created_at AS user_created_at, u.name, u.email, k.upstream_user_id
+FROM member m JOIN "user" u ON u.id=m.user_id
+JOIN knowledge_identity k ON k.user_id=m.user_id AND k.instance_id=$2
+WHERE m.workspace_id=$1 AND k.upstream_user_id IS NOT NULL
+ORDER BY m.created_at, m.id
+`
+
+type ListKnowledgeMembersParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	InstanceID  string      `json:"instance_id"`
+}
+
+type ListKnowledgeMembersRow struct {
+	UserID         pgtype.UUID        `json:"user_id"`
+	Role           string             `json:"role"`
+	JoinedAt       pgtype.Timestamptz `json:"joined_at"`
+	UserCreatedAt  pgtype.Timestamptz `json:"user_created_at"`
+	Name           string             `json:"name"`
+	Email          string             `json:"email"`
+	UpstreamUserID pgtype.Text        `json:"upstream_user_id"`
+}
+
+func (q *Queries) ListKnowledgeMembers(ctx context.Context, arg ListKnowledgeMembersParams) ([]ListKnowledgeMembersRow, error) {
+	rows, err := q.db.Query(ctx, listKnowledgeMembers, arg.WorkspaceID, arg.InstanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListKnowledgeMembersRow{}
+	for rows.Next() {
+		var i ListKnowledgeMembersRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Role,
+			&i.JoinedAt,
+			&i.UserCreatedAt,
+			&i.Name,
+			&i.Email,
+			&i.UpstreamUserID,
 		); err != nil {
 			return nil, err
 		}
@@ -540,6 +613,35 @@ func (q *Queries) PrepareKnowledgeIdentity(ctx context.Context, arg PrepareKnowl
 	return err
 }
 
+const prepareKnowledgeServiceIdentity = `-- name: PrepareKnowledgeServiceIdentity :one
+UPDATE workspace_knowledge SET service_key_ciphertext = COALESCE(service_key_ciphertext, $2)
+WHERE workspace_id = $1 RETURNING workspace_id, team_id, instance_id, name, memory_agent_id, memory_user_id, created_by, created_at, updated_at, service_user_id, service_key_ciphertext
+`
+
+type PrepareKnowledgeServiceIdentityParams struct {
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	ServiceKeyCiphertext []byte      `json:"service_key_ciphertext"`
+}
+
+func (q *Queries) PrepareKnowledgeServiceIdentity(ctx context.Context, arg PrepareKnowledgeServiceIdentityParams) (WorkspaceKnowledge, error) {
+	row := q.db.QueryRow(ctx, prepareKnowledgeServiceIdentity, arg.WorkspaceID, arg.ServiceKeyCiphertext)
+	var i WorkspaceKnowledge
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.TeamID,
+		&i.InstanceID,
+		&i.Name,
+		&i.MemoryAgentID,
+		&i.MemoryUserID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ServiceUserID,
+		&i.ServiceKeyCiphertext,
+	)
+	return i, err
+}
+
 const retryKnowledgeExtraction = `-- name: RetryKnowledgeExtraction :one
 UPDATE knowledge_extraction SET status = 'pending', available_at = now(),
     last_error = NULL, attempts = 0, updated_at = now(),
@@ -581,6 +683,21 @@ func (q *Queries) RetryKnowledgeExtraction(ctx context.Context, arg RetryKnowled
 		&i.BindingCreatedAt,
 	)
 	return i, err
+}
+
+const saveKnowledgeDisplayName = `-- name: SaveKnowledgeDisplayName :exec
+UPDATE knowledge_identity SET display_name = $3 WHERE instance_id = $1 AND user_id = $2
+`
+
+type SaveKnowledgeDisplayNameParams struct {
+	InstanceID  string      `json:"instance_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	DisplayName pgtype.Text `json:"display_name"`
+}
+
+func (q *Queries) SaveKnowledgeDisplayName(ctx context.Context, arg SaveKnowledgeDisplayNameParams) error {
+	_, err := q.db.Exec(ctx, saveKnowledgeDisplayName, arg.InstanceID, arg.UserID, arg.DisplayName)
+	return err
 }
 
 const saveKnowledgeExtractionPayload = `-- name: SaveKnowledgeExtractionPayload :one

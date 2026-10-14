@@ -466,14 +466,13 @@ test('a metadata alias cannot expose another space\'s persisted Wiki content',as
  let wikiID:string|undefined;
  let personalKey:{key_id:string;key_value:string}|undefined;
  const native=async(path:string,body:unknown)=>{
-  const response=await fetch(process.env.MULTICA_AGENT_MEMORY_CORE_URL+'/v3/meta/'+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.MULTICA_AGENT_MEMORY_API_KEY,'X-Tdai-Service-Id':a.binding.instance_id,'X-Tdai-User-Key':personalKey!.key_value},body:JSON.stringify(body)});
+  const response=await fetch(process.env.MULTICA_AGENT_MEMORY_CORE_URL+'/v3/meta/'+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.MULTICA_AGENT_MEMORY_API_KEY,'X-Tdai-Service-Id':a.binding.instance_id,'X-Tdai-User-Key':path.startsWith('user-key/')?process.env.MULTICA_AGENT_MEMORY_ADMIN_KEY!:personalKey!.key_value},body:JSON.stringify(body)});
   expect(response.status).toBe(200);
   expect((await response.json()).code).toBe(0);
  };
  try {
-  // A temporary caller-owned key permits restoring the test's native metadata
-  // without exposing or changing the backend's managed integration key.
-  const keyResponse=await a.request('meta/user-key/create',{name:`Alias test ${suffix}`});
+  // Privileged fixture setup uses the internal Core, never the user gateway.
+  const keyResponse=await fetch(process.env.MULTICA_AGENT_MEMORY_CORE_URL+'/v3/meta/user-key/create',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+process.env.MULTICA_AGENT_MEMORY_API_KEY,'X-Tdai-Service-Id':a.binding.instance_id,'X-Tdai-User-Key':process.env.MULTICA_AGENT_MEMORY_ADMIN_KEY!},body:JSON.stringify({user_id:a.identity.session.user.user_id,name:`Alias test ${suffix}`})});
   expect(keyResponse.status).toBe(200);
   personalKey=(await keyResponse.json()).data;
   expect(typeof personalKey?.key_id).toBe('string');
@@ -507,7 +506,7 @@ test('a metadata alias cannot expose another space\'s persisted Wiki content',as
    }
   } finally {
    try {
-    if(personalKey) {const revoke=await a.request('meta/user-key/revoke',{key_id:personalKey.key_id});expect(revoke.status).toBe(200);}
+    if(personalKey) await native('user-key/revoke',{key_id:personalKey.key_id});
    } finally {
     for(const workspace of [alpha,beta]) {
      await fetch(`${apiBase}/api/knowledge/binding`,{method:'DELETE',headers:scoped(workspace.id)});

@@ -60,8 +60,9 @@ engines. Web and Desktop share the Memory console and agent memory controls.
   Only the non-sensitive onboarding completion preference is persisted by the
   host per user and workspace; session credentials remain in frame memory.
   Requests recheck workspace membership, the current binding, resource scope and
-  ACLs. Credentials remain on the backend. Embedded space administration follows
-  the current workspace owner/admin role; resource editing retains native ACLs.
+  ACLs. Credentials remain on the backend. Members and account names are read
+  models of Multica; the embedded member view is read-only and API Key routes
+  are unavailable. Resource editing retains native ACLs.
   Wiki/CodeGraph content stores are checked separately from their metadata, so a
   metadata alias cannot redirect a reader to another space's content.
 
@@ -126,14 +127,29 @@ Keep these values in an untracked environment file or deployment secret store:
 | `MULTICA_AGENT_MEMORY_ADMIN_KEY` | Account used to provision mapped users |
 | `MULTICA_AGENT_MEMORY_SECRET_KEY` | Base64 32-byte key encrypting persisted identities |
 
-Automation and team sharing use the managed writer's persisted native account,
-not the provisioning account. A Core instance ID and encryption key must stay
-consistent across workers sharing the same Multica database. Without configuration,
-Multica runs normally and the Memory console reports the missing service setup.
+Multica is the account and membership authority. Each mapped user retains a
+stable internal ID while their display name follows the Multica profile. A
+workspace-scoped service account owns the native team and administers membership;
+it is not a human member and does not appear in the embedded directory. Existing
+teams migrate automatically on first use. Human asset ownership is preserved.
+An instance ID and encryption key must remain consistent across workers sharing
+the same Multica database. Without configuration, Multica runs normally and the
+Memory console reports the missing service setup.
 
-The original upstream team and asset ownership remain independent of Multica's
-binding. Membership revocation is enforced on Multica routes and active embedded
-sessions. Native accounts accessed outside Multica retain their native permissions.
+Role changes and removals attempt native synchronization immediately. A separate
+30-second reconciliation loop retries outages and missed notifications. Every
+embedded request checks current Multica membership independently of this mirror;
+removed users' old panel sessions and task credentials cannot access Memory.
+The embedded gateway rejects account, credential, team and member mutations for
+all roles, including workspace owners. Managed human identities also cannot
+mutate native team membership or issue keys through the Core directly. Manage
+these in Multica. Native services
+and their provisioning credentials are internal infrastructure: expose only the
+Multica gateway to end users. The local launcher binds native services to loopback.
+
+Multiple agents can share a memory. Binding delegates its content to those agents'
+authorized callers. An administrator's inventory privileges alone cannot bind
+another person's private memory to an agent belonging to a different owner.
 
 ## On-demand CLI
 

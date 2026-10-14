@@ -86,3 +86,20 @@ WHERE id = $1 AND lease_token = $2 AND status = 'processing';
 -- name: GetKnowledgeWriterIdentity :one
 SELECT * FROM knowledge_identity
 WHERE instance_id = $1 AND upstream_user_id = $2 LIMIT 1;
+
+-- name: PrepareKnowledgeServiceIdentity :one
+UPDATE workspace_knowledge SET service_key_ciphertext = COALESCE(service_key_ciphertext, $2)
+WHERE workspace_id = $1 RETURNING *;
+
+-- name: CompleteKnowledgeServiceIdentity :exec
+UPDATE workspace_knowledge SET service_user_id = $2 WHERE workspace_id = $1;
+
+-- name: SaveKnowledgeDisplayName :exec
+UPDATE knowledge_identity SET display_name = $3 WHERE instance_id = $1 AND user_id = $2;
+
+-- name: ListKnowledgeMembers :many
+SELECT m.user_id, m.role, m.created_at AS joined_at, u.created_at AS user_created_at, u.name, u.email, k.upstream_user_id
+FROM member m JOIN "user" u ON u.id=m.user_id
+JOIN knowledge_identity k ON k.user_id=m.user_id AND k.instance_id=$2
+WHERE m.workspace_id=$1 AND k.upstream_user_id IS NOT NULL
+ORDER BY m.created_at, m.id;
