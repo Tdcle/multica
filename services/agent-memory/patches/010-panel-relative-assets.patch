@@ -1,0 +1,13 @@
+diff --git a/MemoryPanel/web/vite.config.ts b/MemoryPanel/web/vite.config.ts
+index 0b25fc4..5006215 100644
+--- a/MemoryPanel/web/vite.config.ts
++++ b/MemoryPanel/web/vite.config.ts
+@@ -9,6 +9,8 @@ const TMC_BACKEND_TARGET = process.env.VITE_TMC_BACKEND_URL || 'http://127.0.0.1
+ const SKILL_GATEWAY_TARGET = process.env.VITE_SKILL_GATEWAY_URL || 'http://127.0.0.1:8420';
+ 
+ export default defineConfig({
++  // Serve entry assets and lazy CSS/chunks under the current embedding path.
++  base: './',
+   plugins: [react()],
+   resolve: {
+     alias: {
