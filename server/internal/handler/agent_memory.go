@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -75,6 +77,20 @@ func (h *Handler) ListAgentMemories(w http.ResponseWriter, r *http.Request) {
 	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
 	if !ok {
 		return
+	}
+	if h.Knowledge != nil {
+		user, err := h.Queries.GetUser(r.Context(), parseUUID(requestUserID(r)))
+		if err != nil {
+			writeError(w, 500, "failed to read account")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		err = h.Knowledge.SyncMemoryCatalog(ctx, parseUUID(workspaceID), user, member.Role)
+		cancel()
+		if err != nil {
+			// Keep durable pending memories available during a native outage.
+			slog.Warn("sync native memory catalog", "workspace_id", workspaceID, "error", err)
+		}
 	}
 	rows, err := h.Queries.ListAgentMemories(r.Context(), db.ListAgentMemoriesParams{WorkspaceID: parseUUID(workspaceID), IsAdmin: member.Role == "owner" || member.Role == "admin", ReaderID: parseUUID(requestUserID(r))})
 	if err != nil {

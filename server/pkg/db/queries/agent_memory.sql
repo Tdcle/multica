@@ -73,3 +73,14 @@ DELETE FROM agent_memory_binding WHERE workspace_id=$1;
 -- name: CancelMissingMemoryExtractions :exec
 UPDATE knowledge_extraction SET status='cancelled',lease_token=NULL,lease_until=NULL,updated_at=now()
 WHERE memory_id=$1 AND status IN ('pending','processing','submitted');
+
+-- name: UpdateNativeMemoryName :exec
+UPDATE agent_memory SET name=$4,updated_at=now()
+WHERE workspace_id=$1 AND instance_id=$2 AND native_agent_id=$3 AND name IS DISTINCT FROM $4;
+
+-- name: RegisterNativeMemory :exec
+INSERT INTO agent_memory (workspace_id,name,owner_id,instance_id,team_id,native_agent_id,native_user_id,status)
+VALUES ($1,$2,$3,$4,$5,$6,$7,'ready')
+ON CONFLICT (instance_id,native_agent_id) WHERE native_agent_id <> ''
+DO UPDATE SET name=EXCLUDED.name,updated_at=now()
+WHERE agent_memory.workspace_id=EXCLUDED.workspace_id AND agent_memory.name IS DISTINCT FROM EXCLUDED.name;
