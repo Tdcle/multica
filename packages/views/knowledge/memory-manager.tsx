@@ -243,7 +243,7 @@ export function MemoryManager({
             ) : (
               spaces.data
                 ?.filter(
-                  (memory) => memory.status !== "deleting",
+                  (memory) => memory.status === "ready" || memory.status === "pending",
                 )
                 .map((memory) => (
                   <Button

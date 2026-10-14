@@ -39,24 +39,16 @@ func (s *Service) runMemoryWork(ctx context.Context) {
 			_ = s.Queries.DeleteAgentMemory(ctx, db.DeleteAgentMemoryParams{ID: memory.ID, WorkspaceID: memory.WorkspaceID, LeaseToken: memory.LeaseToken})
 			return
 		}
-	} else if memory.Status == "ready" {
-		identity, e := s.WriterIdentity(runCtx, MemoryBinding(memory))
-		err = e
-		if err == nil {
-			var native struct {
-				Status string `json:"status"`
-			}
-			err = s.Client.Call(runCtx, memory.InstanceID, "/v3/meta/agent/get", identity.Key, map[string]any{"agent_id": memory.NativeAgentID}, &native)
-			var missing *UpstreamError
-			if errors.As(err, &missing) && missing.Status == 404 {
-				// A deletion in the original panel must also detach its Multica binding.
-				err = s.forgetMissingMemory(runCtx, memory)
-				if err == nil {
-					return
-				}
-			} else if err == nil && native.Status == "inactive" {
-				next = "failed"
-				err = fmt.Errorf("native memory was archived; restore it in the panel or retry to create an active memory")
+	} else if memory.Status == "ready" || memory.Status == "failed" {
+		var available bool
+		available, err = s.NativeMemoryAvailable(runCtx, memory)
+		if err == nil && available {
+			next = "ready"
+		}
+		if err == nil && !available {
+			err = s.forgetMissingMemory(runCtx, memory)
+			if err == nil {
+				return
 			}
 		}
 	} else {
@@ -192,7 +184,7 @@ func (s *Service) forgetMissingMemory(ctx context.Context, memory db.AgentMemory
 	if err != nil {
 		return err
 	}
-	if locked.LeaseToken != memory.LeaseToken {
+	if (memory.LeaseToken.Valid && locked.LeaseToken != memory.LeaseToken) || locked.NativeAgentID != memory.NativeAgentID || locked.Status == "pending" {
 		return nil
 	}
 	if err = q.UnbindMemory(ctx, db.UnbindMemoryParams{MemoryID: memory.ID, WorkspaceID: memory.WorkspaceID}); err != nil {
@@ -201,7 +193,7 @@ func (s *Service) forgetMissingMemory(ctx context.Context, memory db.AgentMemory
 	if err = q.CancelMissingMemoryExtractions(ctx, memory.ID); err != nil {
 		return err
 	}
-	if err = q.DeleteAgentMemory(ctx, db.DeleteAgentMemoryParams{ID: memory.ID, WorkspaceID: memory.WorkspaceID, LeaseToken: memory.LeaseToken}); err != nil {
+	if err = q.DeleteAgentMemory(ctx, db.DeleteAgentMemoryParams{ID: memory.ID, WorkspaceID: memory.WorkspaceID, LeaseToken: locked.LeaseToken}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -224,6 +216,7 @@ func (s *Service) SyncMemoryCatalog(ctx context.Context, workspaceID pgtype.UUID
 	if err = s.SyncMember(ctx, team, identity, role); err != nil {
 		return err
 	}
+	active := make(map[string]bool)
 	for offset := 0; ; offset += 100 {
 		var page struct {
 			Items []struct {
@@ -244,6 +237,7 @@ func (s *Service) SyncMemoryCatalog(ctx context.Context, workspaceID pgtype.UUID
 			if agent.ID == "" || agent.Name == "" || agent.TeamID != team.TeamID || agent.Owner != identity.ID || agent.Status == "inactive" {
 				continue
 			}
+			active[agent.ID] = true
 			var metadata struct {
 				MemoryID string `json:"multica_memory_id"`
 			}
@@ -265,7 +259,55 @@ func (s *Service) SyncMemoryCatalog(ctx context.Context, workspaceID pgtype.UUID
 			}
 		}
 		if len(page.Items) == 0 || offset+len(page.Items) >= page.Total {
-			return nil
+			break
 		}
 	}
+	rows, err := s.Queries.ListAgentMemories(ctx, db.ListAgentMemoriesParams{WorkspaceID: workspaceID, ReaderID: user.ID})
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		memory := row.AgentMemory
+		if memory.NativeAgentID == "" || memory.InstanceID != team.InstanceID || memory.TeamID != team.TeamID || memory.Status == "pending" || memory.Status == "deleting" || active[memory.NativeAgentID] {
+			continue
+		}
+		// A list omission may reflect pagination or ACLs, so verify the object
+		// before removing durable state. Outages and permission errors retain it.
+		available, err := s.NativeMemoryAvailable(ctx, memory)
+		if err != nil {
+			return err
+		}
+		if !available {
+			if err = s.forgetMissingMemory(ctx, memory); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// NativeMemoryAvailable distinguishes an explicit removal from transport or ACL
+// failures. Unknown responses must never cause local bindings to be deleted.
+func (s *Service) NativeMemoryAvailable(ctx context.Context, memory db.AgentMemory) (bool, error) {
+	identity, err := s.WriterIdentity(ctx, MemoryBinding(memory))
+	if err != nil {
+		return false, err
+	}
+	var native struct {
+		ID     string `json:"agent_id"`
+		TeamID string `json:"team_id"`
+		Status string `json:"status"`
+	}
+	err = s.Client.Call(ctx, memory.InstanceID, "/v3/meta/agent/get", identity.Key, map[string]any{"agent_id": memory.NativeAgentID}, &native)
+	var missing *UpstreamError
+	if errors.As(err, &missing) && missing.Status == 404 {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if native.ID != memory.NativeAgentID || native.TeamID != memory.TeamID || (native.Status != "active" && native.Status != "inactive") {
+		return false, fmt.Errorf("invalid native memory identity or status")
+	}
+	return native.Status == "active", nil
 }

@@ -156,3 +156,5 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - `server/migrations/425_shared_memory_lookup.up.sql` and `426_shared_memory_bindings.up.sql`: shared memory bindings retain per-agent uniqueness. Rolling back the unique memory index requires detaching additional consumers first; the migration fails rather than removing bindings.
 
 - `server/internal/knowledge/spaces.go`: binding choices reconcile native Agent names and import caller-owned containers from the workspace team, including those created in the original console.
+
+- `server/internal/knowledge/spaces.go` and `server/internal/handler/agent_memory.go`: native inactive/deleted containers are reconciled out of local bindings, and stale binds validate native availability.

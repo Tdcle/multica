@@ -23,7 +23,9 @@ engines. Web and Desktop share the Memory console and agent memory controls.
   Archiving an agent preserves its detached memory by default; the confirmation
   offers explicit permanent deletion. CLI uses `agent archive <id> --delete-memory`.
   Deleting a memory preserves the Multica agent. Native-panel deletions are
-  reconciled automatically, normally within a minute. Deleting a container clears
+  reconciled when the binding list refreshes and by the background worker.
+  Native inactive or missing containers detach consumers and disappear locally;
+  stale binding requests verify the native status before changing any binding. Deleting a container clears
   its L0-L3 conversation history; independent Skill, Wiki and CodeGraph assets
   retain their native lifecycle and are managed separately in the original panel.
 - An issue entering any Done category creates one durable extraction job per
