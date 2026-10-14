@@ -13,7 +13,7 @@ import {
   DialogDescription,
 } from "@multica/ui/components/ui/dialog";
 import { CollectionPageHeaderAction } from "../../layout/collection-page";
-import { MemoryManager, MemoryStatus } from "../../knowledge/memory-manager";
+import { MemoryManager } from "../../knowledge/memory-manager";
 import { useT } from "../../i18n";
 
 export function MemoryLibraryButton() {
@@ -66,7 +66,7 @@ export function AgentMemoryCell({
           <Button
             variant="ghost"
             size="sm"
-            className="h-auto min-w-0 max-w-full flex-col items-start gap-1 px-1 py-1 text-caption"
+            className="h-auto min-w-0 max-w-full px-1 py-1 text-caption"
             aria-label={`${agentName} Memory`}
             onClick={(event) => {
               event.preventDefault();
@@ -86,7 +86,6 @@ export function AgentMemoryCell({
                       : t(($) => $.bindMemory))}
               </span>
             </span>
-            {memory && <MemoryStatus memory={memory} />}
           </Button>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogContent
