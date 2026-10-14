@@ -1,0 +1,50 @@
+diff --git a/MemoryCore/src/gateway/server.ts b/MemoryCore/src/gateway/server.ts
+index 1e3ae46..3e9443f 100644
+--- a/MemoryCore/src/gateway/server.ts
++++ b/MemoryCore/src/gateway/server.ts
+@@ -1227,7 +1227,10 @@ export class TdaiGateway {
+         res,
+         pathname,
+         method,
+-        parseJsonBody,
++        (request) => parseJsonBody(request,
++          pathname === "/v3/skill/create" || pathname === "/v3/skill/files/write"
++            ? Math.max(MAX_BODY_BYTES, 72 * 1024 * 1024)
++            : MAX_BODY_BYTES),
+         sendJson,
+         mergedDeps as V2RouterDeps,
+         extraRoutes,
+diff --git a/MemoryPanel/web/src/i18n/en-US.ts b/MemoryPanel/web/src/i18n/en-US.ts
+index e6cb3f0..7fd0490 100644
+--- a/MemoryPanel/web/src/i18n/en-US.ts
++++ b/MemoryPanel/web/src/i18n/en-US.ts
+@@ -592,10 +592,8 @@ export const enUS = {
+   'skills.scope.fixed': 'Agent Assets',
+   'skills.scope.personal': 'My Assets',
+   'skills.empty.fixed.noAgent': 'Please select an agent.',
+-  'skills.empty.fixed.hasAgent':
+-    'Agent "{{agent}}" has no fixed skills. Click "Import Skill" above to import directly, or select a skill in the "Team" view and use "Fork" to distribute it.',
+-  'skills.empty.team':
+-    'No "shared" skills in the team yet. New skills are private by default — only the owner can see them. To make them visible to the whole team, the owner needs to toggle "Share" in the "My Assets" tab.',
++  'skills.empty.fixed.hasAgent': 'No skills are bound to this agent. Allocate a team skill or import directly.',
++  'skills.empty.team': 'No shared skills yet. Import into Team Assets, then allocate the skill to agents as needed.',
+   'skills.count': '{{count}} items',
+   'skills.noAgent': 'No Agent Available',
+   'skills.fork': 'Fork (writable)',
+diff --git a/MemoryPanel/web/src/i18n/zh-CN.ts b/MemoryPanel/web/src/i18n/zh-CN.ts
+index ea52942..32e9778 100644
+--- a/MemoryPanel/web/src/i18n/zh-CN.ts
++++ b/MemoryPanel/web/src/i18n/zh-CN.ts
+@@ -578,10 +578,8 @@ export const zhCN = {
+   'skills.scope.fixed': 'Agent 资产',
+   'skills.scope.personal': '我的资产分配',
+   'skills.empty.fixed.noAgent': '请选择一个 agent。',
+-  'skills.empty.fixed.hasAgent':
+-    'Agent "{{agent}}" 暂无固定 skill。点击右上「导入 Skill」直接导入，或在「团队」视图选中一条 skill 后通过「Fork」分发。',
+-  'skills.empty.team':
+-    '团队里还没有任何"共享"skill。skill 新建时默认私密，只有 owner 自己能看到；如需让整个团队看到，需要 owner 在「我的资产分配」tab 里点共享按钮。',
++  'skills.empty.fixed.hasAgent': '这个智能体还没有绑定 skill。可以从团队资产分配，也可以直接导入。',
++  'skills.empty.team': '还没有团队 skill。导入后可按需分配给智能体，同一份 skill 可以被多个智能体使用。',
+   'skills.count': '{{count}} 条',
+   'skills.noAgent': '无可选 Agent',
+   'skills.fork': 'Fork（可写）',
