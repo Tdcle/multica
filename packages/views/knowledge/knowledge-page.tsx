@@ -45,6 +45,33 @@ export function KnowledgePage() {
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
   }, [userId, wsId]);
+  useEffect(() => {
+    const sendTheme = () => {
+      frame.current?.contentWindow?.postMessage(
+        {
+          type: "multica-memory-appearance",
+          dark: document.documentElement.classList.contains("dark"),
+          language: document.documentElement.lang || "en",
+        },
+        "*",
+      );
+    };
+    const receive = (event: MessageEvent) => {
+      const source = frame.current?.contentWindow;
+      if (!source || event.source !== source || event.data?.type !== "multica-memory-appearance-read") return;
+      sendTheme();
+    };
+    const observer = new MutationObserver(sendTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "lang"],
+    });
+    window.addEventListener("message", receive);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("message", receive);
+    };
+  }, []);
   const { t } = useT("knowledge");
   const state = useQuery({
     ...knowledgeStateOptions(wsId),

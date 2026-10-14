@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, readFile, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dirname, resolve } from "node:path";
@@ -61,6 +61,18 @@ try {
   if (applied < 0) throw new Error("Agent Memory source does not match the ordered integration patches; existing edits were preserved");
   for (const patch of patches.slice(applied)) await run("git", ["apply", patch.path], source);
 } finally { await rm(scratch, { recursive: true, force: true }); }
+
+// The native console consumes the same tokens as Web and Desktop. Strip only
+// Tailwind directives; keep the actual token values in their single source.
+const designTokens = await readFile(resolve(root, "packages/ui/styles/tokens.css"), "utf8");
+const inlineTheme = designTokens.match(/@theme inline \{([\s\S]*?)^\}/m)?.[1] || "";
+const radii = [...inlineTheme.matchAll(/^\s*(--radius-[^:]+:[^;]+;)/gm)].map(match => match[1]).join("\n  ");
+const panelTokens = designTokens
+  .replace(/@theme inline \{[\s\S]*?^\}/m, `:root {\n  ${radii}\n}`)
+  .replace(/@theme \{/g, ":root {")
+  .replace(/:root/g, "html[data-multica-memory]")
+  .replace(/^\.dark \{/gm, "html[data-multica-memory].dark {");
+await writeFile(resolve(source, "MemoryPanel/web/src/multica-tokens.css"), panelTokens);
 
 if (process.argv.includes("--install")) {
   for (const module of ["MemoryCore", "MemoryKnowledge", "MemoryPanel", "MemoryPanel/web", "MemoryProxy"]) {
