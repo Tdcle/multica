@@ -588,7 +588,17 @@ let ticket = new URLSearchParams(location.hash.slice(1)).get('session');
 if (!ticket) throw new Error('Knowledge panel session is required');
 history.replaceState(null, '', prefix + '#/memory');
 const memory = new Map();
-const storage = {getItem: key => memory.get(String(key)) ?? null, setItem: (key,value) => memory.set(String(key), String(value)), removeItem: key => memory.delete(String(key)), clear: () => memory.clear(), key: index => [...memory.keys()][index] ?? null, get length() { return memory.size; }};
+let onboardedKey;
+const notifyOnboarding = key => {
+ if (key === onboardedKey) window.parent.postMessage({type:'multica-memory-onboarding', action:'write', completed:memory.get(key) === '1'}, '*');
+};
+const storage = {
+ getItem: key => memory.get(String(key)) ?? null,
+ setItem: (key,value) => {key=String(key); memory.set(key,String(value)); notifyOnboarding(key);},
+ removeItem: key => {key=String(key); memory.delete(key); notifyOnboarding(key);},
+ clear: () => memory.clear(), key: index => [...memory.keys()][index] ?? null,
+ get length() { return memory.size; }
+};
 Object.defineProperty(window, 'localStorage', {value:storage});
 Object.defineProperty(window, 'sessionStorage', {value:storage});
 const originalFetch = window.fetch.bind(window);
@@ -606,6 +616,19 @@ window.fetch = (input, init = {}) => {
 const response = await fetch(prefix + 'bootstrap');
 if (!response.ok) {document.getElementById('root').textContent = 'Knowledge panel session expired. Reload the knowledge tab.'; throw new Error('Knowledge identity bootstrap failed');}
 const context = await response.json();
+// Persist only the non-sensitive onboarding preference through the host. The
+// sandboxed frame keeps all session data and credentials in its private Map.
+const completed = await new Promise(resolve => {
+ const finish = value => {clearTimeout(timeout); window.removeEventListener('message', receive); resolve(value);};
+ const receive = event => {
+  if (event.source === window.parent && event.data?.type === 'multica-memory-onboarding-state' && typeof event.data.completed === 'boolean') finish(event.data.completed);
+ };
+ const timeout = setTimeout(() => finish(false), 2000);
+ window.addEventListener('message', receive);
+ window.parent.postMessage({type:'multica-memory-onboarding', action:'read'}, '*');
+});
+onboardedKey = 'tdai-panel.onboarded.' + (context.session.user?.user_id || 'anonymous');
+if (completed) memory.set(onboardedKey, '1');
 window.__MULTICA_PANEL_CONTEXT__ = {can_manage_space: context.can_manage_space === true};
 localStorage.setItem('tdai-panel.session', JSON.stringify(context.session));
 localStorage.setItem('tdai-memory.activeTeam.v1', context.team_id);
