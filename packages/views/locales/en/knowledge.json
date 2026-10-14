@@ -1,5 +1,5 @@
 {
-  "title": "Knowledge",
+  "title": "Memory",
   "description": "Each agent has its own memory. Detached memories remain available for rebinding.",
   "create": "Create space",
   "bind": "Bind existing space",
@@ -26,7 +26,7 @@
   "loadError": "Could not load knowledge.",
   "operationError": "Could not complete this action.",
   "panelUnavailable": "The knowledge panel is unavailable.",
-  "openPanel": "Open knowledge panel",
+  "openPanel": "Open Memory console",
   "reloadPanel": "Reload panel",
   "revision": "Revision {{revision}}",
   "memories": "Memories",

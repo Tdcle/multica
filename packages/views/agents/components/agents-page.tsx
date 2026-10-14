@@ -8,6 +8,8 @@ import {
   Plus,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { memoryListOptions } from "@multica/core/knowledge";
+import { AgentMemoryCell, MemoryLibraryButton } from "./agent-memory-controls";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
   Agent,
@@ -87,7 +89,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 // the documented exception to the single-line management-list rule.
 const GRID_COLS =
   "grid-cols-[0.75rem_minmax(120px,1fr)_var(--agc-status-mobile)_1.75rem_0.75rem] " +
-  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_var(--agc-status-desktop)_var(--agc-owner)_var(--agc-access)_var(--agc-runtime)_var(--agc-lastactive)_var(--agc-runs)_var(--agc-model)_var(--agc-created)_1.75rem_0.75rem]";
+  "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_var(--agc-status-desktop)_var(--agc-owner)_var(--agc-access)_var(--agc-runtime)_var(--agc-memory)_var(--agc-lastactive)_var(--agc-runs)_var(--agc-model)_var(--agc-created)_1.75rem_0.75rem]";
 
 // Two-line rows; the virtualizer's fixed-size contract.
 const ROW_HEIGHT = 64;
@@ -95,6 +97,7 @@ const ROW_HEIGHT = 64;
 // Single source for hideable column widths: track vars and the grid's
 // min-width derive from the same numbers.
 const COLUMN_WIDTHS: Record<AgentColumnKey, number> = {
+  memory: 184,
   // Sized for the worst case "Online · 2 tasks" (~140px incl. padding);
   // idle rows show only the dot + label and leave some in-track slack.
   status: 144,
@@ -109,9 +112,9 @@ const COLUMN_WIDTHS: Record<AgentColumnKey, number> = {
 };
 
 // Fixed tracks (edges 12+12, checkbox 16, name min 200, kebab 28) plus the
-// 11 gap-x-3 gaps between the wide template's 12 tracks (zero-width tracks
+// 13 gap-x-3 gaps between the wide template's 14 tracks (zero-width tracks
 // still carry gaps).
-const FIXED_TRACKS_WIDTH = 268 + 11 * 12;
+const FIXED_TRACKS_WIDTH = 268 + 13 * 12;
 
 function columnTrackVars(
   isVisible: (key: AgentColumnKey) => boolean,
@@ -130,6 +133,7 @@ function columnTrackVars(
     "--agc-owner": width("owner"),
     "--agc-access": width("access"),
     "--agc-runtime": width("runtime"),
+    "--agc-memory": width("memory"),
     "--agc-lastactive": width("lastActive"),
     "--agc-runs": width("runs"),
     "--agc-model": width("model"),
@@ -267,11 +271,14 @@ function PageHeaderBar({
         label: t(($) => $.page.learn_more),
       }}
       actions={
-        <CollectionPageHeaderAction
-          icon={Plus}
-          label={t(($) => $.page.new_agent)}
-          onClick={onCreate}
-        />
+        <>
+          <MemoryLibraryButton />
+          <CollectionPageHeaderAction
+            icon={Plus}
+            label={t(($) => $.page.new_agent)}
+            onClick={onCreate}
+          />
+        </>
       }
     />
   );
@@ -642,6 +649,11 @@ function AgentListHeader({
       ) : (
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
       )}
+      {isColVisible("memory") ? (
+        <ListGridHeaderCell className="hidden @2xl:flex">{t(($) => $.columns.memory)}</ListGridHeaderCell>
+      ) : (
+        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
+      )}
       {isColVisible("lastActive") ? (
         <ListGridHeaderCell
           className="hidden @2xl:flex"
@@ -719,6 +731,7 @@ function LoadingSkeleton() {
         <ListGridHeaderCell className="hidden @2xl:flex">
           <Skeleton className="h-3 w-10" />
         </ListGridHeaderCell>
+        <ListGridHeaderCell className="hidden @2xl:flex"><Skeleton className="h-3 w-16" /></ListGridHeaderCell>
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
         <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
         <span aria-hidden="true" />
@@ -752,6 +765,7 @@ function LoadingSkeleton() {
           <ListGridCell className="hidden justify-end @2xl:flex">
             <Skeleton className="h-3 w-8" />
           </ListGridCell>
+          <ListGridCell className="hidden @2xl:flex"><Skeleton className="h-3 w-16" /></ListGridCell>
           <ListGridCell className="hidden px-0 @2xl:flex" />
           <ListGridCell className="hidden px-0 @2xl:flex" />
           <span aria-hidden="true" />
@@ -770,6 +784,11 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
+  const memories = useQuery(memoryListOptions(wsId));
+  const memoryByAgent = useMemo(
+    () => new Map((memories.data ?? []).filter(memory => memory.agentId).map(memory => [memory.agentId, memory])),
+    [memories.data],
+  );
   const navigation = useNavigation();
   const rowLink = useRowLink();
   const currentUser = useAuthStore((s) => s.user);
@@ -1130,6 +1149,18 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       )}
                       {isColVisible("runtime") ? (
                         <RuntimeCell row={row} />
+                      ) : (
+                        <ListGridCell className="hidden px-0 @2xl:flex" />
+                      )}
+                      {isColVisible("memory") ? (
+                        <AgentMemoryCell
+                          agentId={row.agent.id}
+                          agentName={row.agent.name}
+                          memory={memoryByAgent.get(row.agent.id)}
+                          canManage={row.canManage && !row.agent.archived_at && !row.agent.system_key}
+                          loading={memories.isPending}
+                          failed={memories.isError}
+                        />
                       ) : (
                         <ListGridCell className="hidden px-0 @2xl:flex" />
                       )}

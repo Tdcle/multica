@@ -45,9 +45,11 @@ export function MemoryStatus({ memory }: { memory: AgentMemory }) {
 export function MemoryManager({
   agentId,
   canManage = true,
+  showDescription = true,
 }: {
   agentId?: string;
   canManage?: boolean;
+  showDescription?: boolean;
 }) {
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
@@ -81,9 +83,11 @@ export function MemoryManager({
     actions.remove.isPending;
   return (
     <div className="space-y-4">
-      <p className="text-body text-muted-foreground">
-        {t(($) => $.memoryDescription)}
-      </p>
+      {showDescription && (
+        <p className="text-body text-muted-foreground">
+          {t(($) => $.memoryDescription)}
+        </p>
+      )}
       {agentId &&
         (state.isPending ? (
           <p role="status">{t(($) => $.loading)}</p>

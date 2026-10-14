@@ -72,7 +72,8 @@
     "model": "模型",
     "created": "创建时间",
     "owner": "Owner",
-    "access": "访问权限"
+    "access": "访问权限",
+    "memory": "Memory"
   },
   "row": {
     "you": "你",

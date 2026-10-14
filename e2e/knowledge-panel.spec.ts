@@ -17,7 +17,10 @@ test('original knowledge panel opens with the workspace identity and all knowled
  await page.addInitScript(token=>{if(window.self!==window.top)return;localStorage.setItem('multica_token',token);localStorage.setItem('multica:chat:isOpen','false')},api.getToken()!);
  try {
   await page.goto(`/${workspace.slug}/knowledge`);
-  await page.getByRole('tab',{name:'Native panel',exact:true}).click();
+  await expect(page.getByRole('link',{name:'Memory',exact:true})).toBeVisible();
+  await expect(page.getByRole('link',{name:'Memory',exact:true}).locator('svg')).toHaveClass(/lucide-brain/);
+  await expect(page.getByRole('tab',{name:'Extraction history'})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Reload panel'})).toHaveCount(0);
   const frame=page.frameLocator('iframe');
   await expect(frame.locator('._memory-app-shell')).toBeVisible();
   await expect(frame.getByText(/Unexpected Application Error|404 Not Found/)).not.toBeVisible();
@@ -37,14 +40,7 @@ test('original knowledge panel opens with the workspace identity and all knowled
   await frame.locator('._memory-team-switcher-trigger').click();
   await expect(frame.locator('._memory-team-switcher-create-form')).not.toBeVisible();
   await expect(frame.locator('._memory-team-switcher-panel').getByText(/^Create Team$|^新建团队$/)).not.toBeVisible();
-  await frame.locator('body').evaluate(body=>body.setAttribute('data-panel-retained','yes'));
-  await page.getByRole('tab',{name:'Extraction history'}).click();
-  await expect(page.locator('iframe')).not.toBeVisible();
-  await page.getByRole('tab',{name:'Native panel'}).click();
-  await expect(frame.locator('body')).toHaveAttribute('data-panel-retained','yes');
-  await page.getByRole('button',{name:'Reload panel'}).click();
-  await expect(frame.locator('._memory-app-shell')).toBeVisible();
-  await expect(frame.locator('body')).not.toHaveAttribute('data-panel-retained','yes');
+  await expect(page.locator('iframe')).toHaveAttribute('title','Memory');
   expect(errors).toEqual([]);
  } finally {
   await fetch(`${apiBase}/api/knowledge/binding`,{method:'DELETE',headers});

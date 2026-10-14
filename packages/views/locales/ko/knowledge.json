@@ -1,5 +1,5 @@
 {
-  "title": "지식",
+  "title": "Memory",
   "reloadPanel": "패널 새로고침",
   "description": "각 에이전트는 독립 메모리를 가집니다. 연결 해제된 메모리는 다시 연결할 수 있습니다.",
   "create": "공간 만들기",
@@ -27,7 +27,7 @@
   "loadError": "지식을 불러올 수 없습니다.",
   "operationError": "작업을 완료할 수 없습니다.",
   "panelUnavailable": "지식 패널을 사용할 수 없습니다.",
-  "openPanel": "지식 패널 열기",
+  "openPanel": "Memory 콘솔 열기",
   "revision": "수정 {{revision}}",
   "memories": "메모리",
   "nativePanel": "관리 패널",

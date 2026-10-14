@@ -3,7 +3,7 @@
 Multica runs the original TencentDB Agent Memory Core, Knowledge, Panel and Proxy
 as separate processes. `upstream.json` pins the source revision and integration
 patches. Extraction, Wiki compilation and CodeGraph indexing use the original
-engines. Web and Desktop share the workspace Knowledge page and embedded panel.
+engines. Web and Desktop share the Memory console and agent memory controls.
 
 ## Behavior
 
@@ -11,8 +11,11 @@ engines. Web and Desktop share the workspace Knowledge page and embedded panel.
   memory. A background worker provisions its private native Agent container.
   Service outages never roll back agent creation; pending setup persists across
   restarts and retries automatically. Each active memory binds to one agent.
-- The Knowledge page lists memories and keeps the complete original panel in its
-  Native panel tab. An agent's Memory tab supports detach, rebind and creation.
+- The sidebar Memory entry opens the complete original console directly, using
+  the Brain icon in both sidebar and desktop tabs. The agent list's Memory column
+  shows binding and setup status and opens detach/rebind controls. Its Memory
+  action manages independent resources, including unbound memories. An agent's
+  detail Memory tab also supports detach, rebind and creation.
   Archiving an agent preserves its detached memory by default; the confirmation
   offers explicit permanent deletion. CLI uses `agent archive <id> --delete-memory`.
   Deleting a memory preserves the Multica agent. Native-panel deletions are
@@ -118,7 +121,7 @@ Keep these values in an untracked environment file or deployment secret store:
 Automation and team sharing use the managed writer's persisted native account,
 not the provisioning account. A Core instance ID and encryption key must stay
 consistent across workers sharing the same Multica database. Without configuration,
-Multica runs normally and the Knowledge page reports the missing service setup.
+Multica runs normally and the Memory console reports the missing service setup.
 
 The original upstream team and asset ownership remain independent of Multica's
 binding. Membership revocation is enforced on Multica routes and active embedded
