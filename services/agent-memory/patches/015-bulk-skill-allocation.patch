@@ -1,0 +1,375 @@
+diff --git a/MemoryPanel/web/src/i18n/en-US.ts b/MemoryPanel/web/src/i18n/en-US.ts
+index 7fd0490..f0b9002 100644
+--- a/MemoryPanel/web/src/i18n/en-US.ts
++++ b/MemoryPanel/web/src/i18n/en-US.ts
+@@ -952,6 +952,23 @@ export const enUS = {
+   'allocAsset.agent.placeholder.empty': '(no agent)',
+   'allocAsset.agent.placeholder.select': 'Select agent',
+   'allocAsset.error.noAgent': 'Please select an agent.',
++  'skills.allocate.title': 'Allocate skills',
++  'skills.allocate.agent': 'Agent',
++  'skills.allocate.available': 'Available skills',
++  'skills.allocate.assigned': 'Assigned skills',
++  'skills.allocate.search': 'Search skills…',
++  'skills.allocate.searchIn': 'Search {{list}}',
++  'skills.allocate.selectAll': 'Select all',
++  'skills.allocate.selected': '{{count}} selected',
++  'skills.allocate.add': 'Allocate',
++  'skills.allocate.remove': 'Unassign',
++  'skills.allocate.added': 'Allocated {{count}} skills',
++  'skills.allocate.removed': 'Unassigned {{count}} skills',
++  'skills.allocate.reload': 'Reload',
++  'skills.allocate.unavailable': 'Skills could not be loaded',
++  'skills.allocate.noMatches': 'No matching skills',
++  'skills.allocate.emptyAvailable': 'All skills are assigned',
++  'skills.allocate.emptyAssigned': 'No skills assigned',
+   'allocAsset.submit': 'Allocate',
+   'allocAsset.cancel': 'Cancel',
+   'allocAsset.notify.success': 'Allocated "{{label}}" → {{agent}}',
+diff --git a/MemoryPanel/web/src/i18n/zh-CN.ts b/MemoryPanel/web/src/i18n/zh-CN.ts
+index 32e9778..f1ea53b 100644
+--- a/MemoryPanel/web/src/i18n/zh-CN.ts
++++ b/MemoryPanel/web/src/i18n/zh-CN.ts
+@@ -924,6 +924,23 @@ export const zhCN = {
+   'allocAsset.agent.placeholder.empty': '(暂无 agent)',
+   'allocAsset.agent.placeholder.select': '请选择 agent',
+   'allocAsset.error.noAgent': '请选择 agent。',
++  'skills.allocate.title': '分配 skill',
++  'skills.allocate.agent': '智能体',
++  'skills.allocate.available': '可分配的 skill',
++  'skills.allocate.assigned': '已分配的 skill',
++  'skills.allocate.search': '搜索 skill…',
++  'skills.allocate.searchIn': '搜索{{list}}',
++  'skills.allocate.selectAll': '全选',
++  'skills.allocate.selected': '已选 {{count}} 项',
++  'skills.allocate.add': '分配',
++  'skills.allocate.remove': '取消分配',
++  'skills.allocate.added': '已分配 {{count}} 个 skill',
++  'skills.allocate.removed': '已取消分配 {{count}} 个 skill',
++  'skills.allocate.reload': '重新加载',
++  'skills.allocate.unavailable': '无法加载 skill',
++  'skills.allocate.noMatches': '没有匹配的 skill',
++  'skills.allocate.emptyAvailable': '所有 skill 均已分配',
++  'skills.allocate.emptyAssigned': '尚未分配 skill',
+   'allocAsset.submit': '分配',
+   'allocAsset.cancel': '取消',
+   'allocAsset.notify.success': '已分配「{{label}}」→ {{agent}}',
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/components/AllocateSkillsDialog.tsx b/MemoryPanel/web/src/pages/SkillsPage/components/AllocateSkillsDialog.tsx
+new file mode 100644
+index 0000000..2b3318b
+--- /dev/null
++++ b/MemoryPanel/web/src/pages/SkillsPage/components/AllocateSkillsDialog.tsx
+@@ -0,0 +1,169 @@
++/** Batch reference bindings without copying or deleting skill content. */
++import { useEffect, useState } from 'react';
++import { useTranslation } from 'react-i18next';
++import { Alert, Button, Checkbox, Input, Modal, Select } from 'tea-component';
++import { agentsApi, assetsApi } from '@/lib/teamApi';
++import '../styles/allocate-skills.css';
++
++type Skill = { asset_id: string; name: string };
++
++export default function AllocateSkillsDialog({ teamId, agents, initialAgentId, onChanged, onClose }: {
++  teamId: string;
++  agents: Array<{ id: string; name: string }>;
++  initialAgentId: string;
++  onChanged: () => void;
++  onClose: () => void;
++}) {
++  const { t } = useTranslation();
++  const [agentId, setAgentId] = useState(initialAgentId || agents[0]?.id || '');
++  const [data, setData] = useState<{ library: Skill[]; assigned: Skill[] } | null>(null);
++  const [leftSelected, setLeftSelected] = useState<string[]>([]);
++  const [rightSelected, setRightSelected] = useState<string[]>([]);
++  const [leftQuery, setLeftQuery] = useState('');
++  const [rightQuery, setRightQuery] = useState('');
++  const [loading, setLoading] = useState(true);
++  const [pending, setPending] = useState<'add' | 'remove' | null>(null);
++  const [error, setError] = useState('');
++  const [notice, setNotice] = useState('');
++  const [revision, setRevision] = useState(0);
++
++  useEffect(() => {
++    let cancelled = false;
++    setLoading(true);
++    setError('');
++    setData(null);
++    if (!agentId) {
++      setLoading(false);
++      return;
++    }
++    Promise.all([
++      // Include readable private skills so detached owned skills remain available.
++      assetsApi.listAccessible(teamId, { asset_type: 'skill', action: 'read' }),
++      agentsApi.getAssets(agentId, false),
++    ]).then(([library, assigned]) => {
++      if (cancelled) return;
++      const sort = (items: Skill[]) => items.sort((a, b) => a.name.localeCompare(b.name));
++      const assignedIds = new Set(assigned.map(item => item.asset_id));
++      setLeftSelected(ids => ids.filter(id => library.some(item => item.asset_id === id) && !assignedIds.has(id)));
++      setRightSelected(ids => ids.filter(id => assignedIds.has(id)));
++      setData({
++        library: sort(library.filter(item => item.status !== 'archived' && item.status !== 'deprecated')),
++        assigned: sort(assigned.filter(item => item.asset_type === 'skill')),
++      });
++    }).catch(error => {
++      if (!cancelled) setError(error instanceof Error ? error.message : String(error));
++    }).finally(() => {
++      if (!cancelled) setLoading(false);
++    });
++    return () => { cancelled = true; };
++  }, [teamId, agentId, revision]);
++
++  const busy = loading || pending !== null;
++  const assignedIds = new Set(data?.assigned.map(skill => skill.asset_id));
++  const available = data?.library.filter(skill => !assignedIds.has(skill.asset_id)) ?? [];
++  const assigned = data?.assigned ?? [];
++
++  async function transfer(direction: 'add' | 'remove') {
++    const ids = direction === 'add' ? leftSelected : rightSelected;
++    if (busy || !data || !agentId || ids.length === 0) return;
++    setPending(direction);
++    setError('');
++    setNotice('');
++    try {
++      // Read immediately before writing: retain all other asset types and binding options.
++      const current = await agentsApi.getFixedAssets(agentId);
++      const selected = new Set(ids);
++      const next = direction === 'remove'
++        ? current.filter(item => item.asset_type !== 'skill' || !selected.has(item.asset_id))
++        : [...current, ...ids.filter(id => !current.some(item => item.asset_id === id)).map(id => ({
++          asset_id: id, asset_type: 'skill' as const, injection_mode: 'reference' as const, priority: 50,
++        }))];
++      await agentsApi.setFixedAssets(agentId, next);
++      setLeftSelected([]);
++      setRightSelected([]);
++      setNotice(t(direction === 'add' ? 'skills.allocate.added' : 'skills.allocate.removed', { count: ids.length }));
++      setLoading(true);
++      setRevision(value => value + 1);
++      onChanged();
++    } catch (error) {
++      // Preserve the selection on failure so a retry applies the same batch.
++      setError(error instanceof Error ? error.message : String(error));
++    } finally {
++      setPending(null);
++    }
++  }
++
++  function column(side: 'available' | 'assigned', items: Skill[], selected: string[], query: string,
++    setSelected: (ids: string[]) => void, setQuery: (query: string) => void) {
++    const title = t(`skills.allocate.${side}`);
++    const visible = items.filter(skill => skill.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
++    const selectedVisible = visible.filter(skill => selected.includes(skill.asset_id)).length;
++    return (
++      <section className="_skill-transfer-column" aria-label={title}>
++        <div className="_skill-transfer-heading"><h3>{title}</h3><span>{items.length}</span></div>
++        <Input size="full" value={query} onChange={setQuery} disabled={pending !== null}
++          placeholder={t('skills.allocate.search')} aria-label={t('skills.allocate.searchIn', { list: title })} />
++        <div className="_skill-transfer-selection">
++          <Checkbox value={visible.length > 0 && selectedVisible === visible.length}
++            indeterminate={selectedVisible > 0 && selectedVisible < visible.length}
++            disabled={busy || !data || visible.length === 0}
++            onChange={checked => setSelected(checked
++              ? [...new Set([...selected, ...visible.map(skill => skill.asset_id)])]
++              : selected.filter(id => !visible.some(skill => skill.asset_id === id)))}>
++            {t('skills.allocate.selectAll')}
++          </Checkbox>
++          <span>{t('skills.allocate.selected', { count: selected.length })}</span>
++        </div>
++        <div className="_skill-transfer-list" aria-busy={busy}>
++          {loading ? <p>{t('common.loading')}</p> : !data ? <p>{t('skills.allocate.unavailable')}</p>
++            : visible.length === 0 ? <p>{t(query ? 'skills.allocate.noMatches'
++              : side === 'available' ? 'skills.allocate.emptyAvailable' : 'skills.allocate.emptyAssigned')}</p>
++            : visible.map(skill => (
++              <Checkbox key={skill.asset_id} className="_skill-transfer-row" value={selected.includes(skill.asset_id)}
++                disabled={pending !== null} title={skill.name}
++                onChange={checked => setSelected(checked ? [...selected, skill.asset_id]
++                  : selected.filter(id => id !== skill.asset_id))}>
++                <span>{skill.name}</span>
++              </Checkbox>
++            ))}
++        </div>
++      </section>
++    );
++  }
++
++  return (
++    <Modal visible caption={t('skills.allocate.title')} size={880} className="_skill-transfer-modal"
++      onClose={() => { if (!pending) onClose(); }} disableEscape={pending !== null} disableCloseIcon={pending !== null}>
++      <Modal.Body>
++        <div className="_skill-transfer-target">
++          <label id="skill-transfer-agent-label">{t('skills.allocate.agent')}</label>
++          <Select boxClassName="_skill-transfer-agent-options" aria-labelledby="skill-transfer-agent-label" size="full" value={agentId}
++            disabled={pending !== null || agents.length === 0} options={agents.map(agent => ({ value: agent.id, text: agent.name }))}
++            placeholder={t('skills.noAgent')} onChange={id => {
++              setAgentId(id); setData(null); setLoading(true); setLeftSelected([]); setRightSelected([]);
++              setRightQuery(''); setError(''); setNotice('');
++            }} />
++        </div>
++        {error && <Alert type="error"><span role="alert">{error}</span>{' '}
++          <Button type="link" disabled={busy} onClick={() => setRevision(value => value + 1)}>{t('skills.allocate.reload')}</Button>
++        </Alert>}
++        <div className="_skill-transfer-grid">
++          {column('available', available, leftSelected, leftQuery, setLeftSelected, setLeftQuery)}
++          <div className="_skill-transfer-actions">
++            <Button type="primary" disabled={busy || !data || leftSelected.length === 0}
++              loading={pending === 'add'} onClick={() => void transfer('add')}>
++              {t('skills.allocate.add')} <span aria-hidden="true">→</span>
++            </Button>
++            <Button disabled={busy || !data || rightSelected.length === 0}
++              loading={pending === 'remove'} onClick={() => void transfer('remove')}>
++              <span aria-hidden="true">←</span> {t('skills.allocate.remove')}
++            </Button>
++          </div>
++          {column('assigned', assigned, rightSelected, rightQuery, setRightSelected, setRightQuery)}
++        </div>
++        <div className="_skill-transfer-status" role="status" aria-live="polite">{notice}</div>
++      </Modal.Body>
++      <Modal.Footer><Button onClick={onClose} disabled={pending !== null}>{t('common.close')}</Button></Modal.Footer>
++    </Modal>
++  );
++}
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx b/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx
+index 9407043..23dc8f3 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx
++++ b/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx
+@@ -1,6 +1,6 @@
+ /** One team library with optional agent bindings and agent-owned extracted skills. */
+ import { useState } from 'react';
+-import AllocateAssetDialog from '@/components/asset/AllocateAssetDialog';
++import AllocateSkillsDialog from './AllocateSkillsDialog';
+ import { agentsApi } from '@/lib/teamApi';
+ import { useTranslation } from 'react-i18next';
+ import { Button, Select, Segment, Tag, Tooltip } from 'tea-component';
+@@ -108,11 +108,9 @@ export default function SkillsPanel({
+         }
+         actions={
+           <>
+-            {tab === 'team' && (
+-              <Button onClick={() => setAllocating(true)} disabled={!selectedSkillId || teamAgents.length === 0}>
+-                {t('allocAsset.submit')}
+-              </Button>
+-            )}
++            <Button onClick={() => setAllocating(true)} disabled={!activeTeamId || teamAgents.length === 0}>
++              {t('allocAsset.submit')}
++            </Button>
+             {(() => {
+               const canFork = tab === 'team' && !!selectedSkillId;
+               const tooltip =
+@@ -291,18 +289,10 @@ export default function SkillsPanel({
+       />
+ 
+       {/* Modals (only for team/fixed tabs) */}
+-      {allocating && selectedSkillId && (
+-        <AllocateAssetDialog assetType="skill" assetLabel={selectedSkill?.name || selectedSkillId}
+-          agents={teamAgents} team={activeTeam} onClose={() => setAllocating(false)}
+-          onAllocate={async agentId => {
+-            const bindings = await agentsApi.getFixedAssets(agentId);
+-            if (!bindings.some(binding => binding.asset_id === selectedSkillId)) {
+-              await agentsApi.setFixedAssets(agentId, [...bindings, {
+-                asset_id: selectedSkillId, asset_type: 'skill', injection_mode: 'reference', priority: 50,
+-              }]);
+-            }
+-            void refresh();
+-          }} />
++      {allocating && activeTeamId && (
++        <AllocateSkillsDialog key={activeTeamId} teamId={activeTeamId} agents={teamAgents}
++          initialAgentId={selectedAgent} onClose={() => setAllocating(false)}
++          onChanged={() => void refresh()} />
+       )}
+       {showImport && (
+         <ImportSkillDialog
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/styles/allocate-skills.css b/MemoryPanel/web/src/pages/SkillsPage/styles/allocate-skills.css
+new file mode 100644
+index 0000000..ece5ae7
+--- /dev/null
++++ b/MemoryPanel/web/src/pages/SkillsPage/styles/allocate-skills.css
+@@ -0,0 +1,88 @@
++._skill-transfer-target {
++  display: flex;
++  align-items: center;
++  gap: 12px;
++  margin-bottom: 16px;
++}
++._skill-transfer-target > label { flex: none; font-weight: 500; }
++._skill-transfer-target .tea-dropdown { width: 240px; max-width: 100%; }
++._skill-transfer-grid {
++  display: grid;
++  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
++  align-items: stretch;
++  gap: 16px;
++}
++._skill-transfer-column {
++  min-width: 0;
++  display: flex;
++  flex-direction: column;
++  padding: 12px;
++  border: 1px solid var(--tea-color-border-primary-default);
++  border-radius: var(--radius-lg);
++  background: var(--tea-color-bg-primary-default);
++}
++._skill-transfer-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
++._skill-transfer-heading h3 { margin: 0; font-size: var(--text-body); font-weight: 500; }
++._skill-transfer-heading > span, ._skill-transfer-selection > span { color: var(--tea-color-text-secondary); font-size: var(--text-caption); }
++._skill-transfer-selection { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 4px 8px; }
++._skill-transfer-list {
++  height: min(360px, 40vh);
++  min-height: 120px;
++  overflow-y: auto;
++  overscroll-behavior: contain;
++  scrollbar-gutter: stable;
++}
++._skill-transfer-list > p { padding: 36px 12px; text-align: center; color: var(--tea-color-text-secondary); font-size: var(--text-body); }
++._skill-transfer-list ._skill-transfer-row {
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  width: 100%;
++  min-height: 36px;
++  margin: 0;
++  padding: 8px;
++  border-radius: var(--radius-md);
++  cursor: pointer;
++}
++._skill-transfer-row:hover { background: var(--tea-color-bg-primary-hover); }
++._skill-transfer-row:has(input:checked) { background: var(--tea-color-bg-primary-active); }
++._skill-transfer-row:focus-within { outline: 2px solid var(--tea-color-border-primary-focus); outline-offset: -2px; }
++._skill-transfer-row .tea-form-check__label { min-width: 0; overflow-wrap: anywhere; }
++._skill-transfer-actions { display: flex; flex-direction: column; justify-content: center; gap: 8px; }
++._skill-transfer-actions .tea-btn { margin: 0; white-space: nowrap; }
++._skill-transfer-status { min-height: 20px; margin-top: 12px; color: var(--tea-color-text-secondary); font-size: var(--text-caption); }
++@media (max-width: 640px) {
++  ._skill-transfer-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
++  ._skill-transfer-actions { flex-direction: row; }
++  ._skill-transfer-list { height: 160px; }
++  ._skill-transfer-target { align-items: flex-start; flex-direction: column; gap: 8px; }
++  ._skill-transfer-target .tea-dropdown { width: 100%; }
++}
++
++._skill-transfer-target .tea-dropdown__header {
++  padding: 6px 10px;
++  border: 1px solid var(--tea-color-border-primary-default);
++  border-radius: var(--radius-md);
++}
++._skill-transfer-column > .tea-input, ._skill-transfer-heading, ._skill-transfer-selection, ._skill-transfer-list { flex: none; }
++._skill-transfer-column .tea-form-check .tea-checkbox {
++  position: static;
++  flex: none;
++  margin: 0;
++  border-radius: var(--radius-sm);
++}
++._skill-transfer-selection .tea-form-check {
++  display: inline-flex;
++  align-items: center;
++  gap: 8px;
++  padding: 0;
++  margin: 0;
++}
++
++/* Native checkmarks retain contrast in both Multica themes. */
++._skill-transfer-column input[type="checkbox"].tea-checkbox {
++  appearance: auto;
++  accent-color: var(--tea-color-text-primary);
++}
++._skill-transfer-column input[type="checkbox"].tea-checkbox:checked,
++._skill-transfer-column input[type="checkbox"].tea-checkbox:indeterminate { background-image: none; }

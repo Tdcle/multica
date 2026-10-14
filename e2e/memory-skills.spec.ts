@@ -9,8 +9,9 @@ import { TestApiClient } from './fixtures';
 
 const apiBase = process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || 8080}`;
 test.skip(!process.env.MULTICA_AGENT_MEMORY_CORE_URL, 'Requires native Memory services');
+test.use({ actionTimeout: 10000 });
 
-test('one Skills entry, lossless team migration, shared bindings and task recall', async ({ page }) => {
+test('one Skills entry, lossless team migration, shared bindings and task recall', async ({ page }, testInfo) => {
   test.setTimeout(120000);
   const suffix = `${Date.now()}-${process.pid}`;
   const owner = new TestApiClient();
@@ -24,6 +25,7 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
   const backup = join(directory, 'backup.json');
   let nativeTeam: string | undefined;
   let nativeSkill: string | undefined;
+  const extraSkills: string[] = [];
   try {
     const provision = await call('/api/knowledge/binding', 'POST', { name: 'Memory Skills' });
     expect(provision.status, await provision.clone().text()).toBe(201);
@@ -134,17 +136,103 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
     await expect(page.locator(`a[href="/${workspace.slug}/skills"]`)).toHaveCount(0);
     await frame.getByText(name, { exact: true }).first().click();
     await expect(frame.getByText(marker, { exact: false })).toBeVisible();
-    // Allocate a team reference through the visible console, then detach it without deleting the asset.
-    for (const agent of agents) {
-      expect((await panel('meta/agent-fixed-asset/set', { agent_id: (await memory(agent.id)).native_agent_id, bindings: [] })).status).toBe(200);
+    // Bulk reference allocation persists independently for each agent and retains other assets.
+    for (const name of ['release-checklist', 'incident-triage']) {
+      const response = await panel('skill/create', { user_id: nativeUser, team_id: nativeTeam,
+        name, content: `---\nname: ${name}\ndescription: Bulk allocation fixture\n---\n${name}` });
+      expect(response.status).toBe(200);
+      extraSkills.push((await response.json()).data.skill_id);
     }
-    await frame.getByRole('button', { name: 'Allocate', exact: true }).click();
-    await frame.getByRole('button', { name: 'Allocate', exact: true }).last().click();
+    const nativeA = (await memory(agents[0].id)).native_agent_id;
+    const nativeB = (await memory(agents[1].id)).native_agent_id;
+    const otherID = `chat_memory-${nativeTeam}-${nativeA}`;
+    expect((await panel('meta/asset/get', { asset_id: otherID })).status).toBe(200);
+    const otherBinding = { asset_id: otherID, asset_type: 'chat_memory', injection_mode: 'summary', priority: 17, created_by: nativeUser };
+    for (const agent_id of [nativeA, nativeB]) {
+      expect((await panel('meta/agent-fixed-asset/set', { agent_id, bindings: [otherBinding] })).status).toBe(200);
+    }
+    const bindings = async (agent_id: string) => (await (await panel('meta/agent-fixed-asset/list', { agent_id })).json()).data.items;
+    // No skill needs to be selected before opening the manager.
     await frame.getByText('Agent Assets', { exact: true }).click();
-    await expect(frame.getByText(name, { exact: true }).first()).toBeVisible();
-    await frame.getByRole('button', { name: 'Unbind', exact: true }).click();
     await expect(frame.getByText(name, { exact: true })).toHaveCount(0);
-    expect((await panel('skill/get', { team_id: binding.team_id, skill_id: skillID })).status).toBe(200);
+    await frame.getByRole('button', { name: 'Allocate', exact: true }).click();
+    const dialog = frame.locator('._skill-transfer-modal');
+    const available = dialog.getByRole('region', { name: 'Available skills', exact: true });
+    const assigned = dialog.getByRole('region', { name: 'Assigned skills', exact: true });
+    const selectAgent = async (name: string) => {
+      await dialog.locator('._skill-transfer-target .tea-dropdown').click();
+      await frame.locator('._skill-transfer-agent-options [aria-selected]').getByText(name, { exact: true }).click();
+      await expect(frame.locator('._skill-transfer-agent-options').first()).not.toBeVisible();
+      await expect(available.locator('._skill-transfer-list')).toHaveAttribute('aria-busy', 'false');
+    };
+    await selectAgent('Reader A');
+    await available.getByRole('checkbox', { name: 'deployment-recovery', exact: true }).check();
+    await available.getByRole('checkbox', { name: 'release-checklist', exact: true }).check();
+    // A rejected write keeps the batch selected and reports the error.
+    await page.route('**/api/v1/meta/agent-fixed-asset/set', route => route.fulfill({
+      status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Allocation temporarily unavailable' }),
+    }), { times: 1 });
+    await dialog.getByRole('button', { name: 'Allocate', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toContainText(/503|unavailable/i);
+    await expect(available.getByRole('checkbox', { name: 'release-checklist', exact: true })).toBeChecked();
+    await dialog.getByRole('button', { name: 'Allocate', exact: true }).click();
+    await expect(assigned.getByRole('checkbox', { name: name, exact: true })).toBeVisible();
+    await expect(assigned.getByRole('checkbox', { name: 'release-checklist', exact: true })).toBeVisible();
+    expect(await bindings(nativeA)).toEqual(expect.arrayContaining([expect.objectContaining(otherBinding),
+      expect.objectContaining({ asset_id: skillID, injection_mode: 'reference', priority: 50 }),
+      expect.objectContaining({ asset_id: extraSkills[0] })]));
+    expect(await bindings(nativeB)).toHaveLength(1);
+    // Switching agents clears selection and exposes the same team skills for shared allocation.
+    await available.getByRole('checkbox', { name: 'incident-triage', exact: true }).check();
+    await selectAgent('Reader B');
+    await expect(dialog.getByRole('button', { name: 'Allocate', exact: true })).toBeDisabled();
+    await available.getByRole('textbox').fill('release');
+    await expect(available.getByRole('checkbox', { name: 'deployment-recovery', exact: true })).toHaveCount(0);
+    await available.getByRole('checkbox', { name: 'Select all', exact: true }).check();
+    await available.getByRole('textbox').fill('');
+    await available.getByRole('checkbox', { name: 'deployment-recovery', exact: true }).check();
+    await dialog.getByRole('button', { name: 'Allocate', exact: true }).click();
+    await expect(assigned.getByRole('checkbox', { name: 'release-checklist', exact: true })).toBeVisible();
+    await assigned.getByRole('checkbox', { name: 'Select all', exact: true }).check();
+    await dialog.getByRole('button', { name: 'Unassign', exact: true }).click();
+    await expect(assigned.getByText('No skills assigned')).toBeVisible();
+    expect(await bindings(nativeB)).toEqual([expect.objectContaining(otherBinding)]);
+    expect(await bindings(nativeA)).toHaveLength(3);
+    await selectAgent('Reader A');
+    // Both directions support multi-selection and keyboard activation.
+    await assigned.getByRole('checkbox', { name: 'deployment-recovery', exact: true }).focus();
+    await assigned.getByRole('checkbox', { name: 'deployment-recovery', exact: true }).press('Space');
+    await assigned.getByRole('checkbox', { name: 'release-checklist', exact: true }).check();
+    const checkbox = assigned.getByRole('checkbox', { name: 'release-checklist', exact: true });
+    expect(await checkbox.evaluate(input => {
+      const label = input.closest('label')!;
+      const text = label.querySelector('.tea-form-check__label')!;
+      const a = input.getBoundingClientRect(), b = text.getBoundingClientRect();
+      return Math.abs(a.y + a.height / 2 - b.y - b.height / 2);
+    })).toBeLessThan(3);
+    await page.screenshot({ path: testInfo.outputPath('bulk-allocation.png'), animations: 'disabled' });
+    await page.evaluate(() => document.documentElement.classList.add('dark'));
+    await expect.poll(() => dialog.evaluate(node => node.ownerDocument.documentElement.classList.contains('dark'))).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath('bulk-allocation-dark.png'), animations: 'disabled' });
+    await page.evaluate(() => document.documentElement.classList.remove('dark'));
+    await expect.poll(() => dialog.evaluate(node => node.ownerDocument.documentElement.classList.contains('dark'))).toBe(false);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(dialog.getByRole('button', { name: 'Unassign', exact: true })).toBeInViewport();
+    expect(await dialog.evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+    expect(await available.locator('._skill-transfer-list').evaluate(node => node.getBoundingClientRect().height)).toBeLessThan(165);
+    await page.screenshot({ path: testInfo.outputPath('bulk-allocation-mobile.png') });
+    await dialog.getByRole('button', { name: 'Unassign', exact: true }).click();
+    await expect(assigned.getByText('No skills assigned')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
+    expect(await bindings(nativeA)).toEqual([expect.objectContaining(otherBinding)]);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    // Reopening reloads persisted state. Detaching preserves assets and revokes task reads.
+    await frame.getByRole('button', { name: 'Allocate', exact: true }).click();
+    await expect(dialog.getByRole('region', { name: 'Assigned skills', exact: true }).getByText('No skills assigned')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
+    for (const id of [skillID, ...extraSkills]) {
+      expect((await panel('skill/get', { team_id: nativeTeam, skill_id: id })).status).toBe(200);
+    }
     for (const token of taskTokens) {
       expect((await fetch(apiBase + `/api/knowledge/assets/${skillID}?ref=references%2Frecovery.md`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(403);
     }
@@ -157,11 +245,11 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
   } finally {
     await call(`/api/workspaces/${workspace.id}`, 'DELETE');
     if (nativeTeam) {
-      if (nativeSkill) {
+      for (const nativeSkillID of [nativeSkill, ...extraSkills].filter(Boolean)) {
         const removed = await fetch(process.env.MULTICA_AGENT_MEMORY_CORE_URL + '/v3/skill/delete', {
           method: 'POST', headers: { Authorization: 'Bearer ' + process.env.MULTICA_AGENT_MEMORY_API_KEY,
             'Content-Type': 'application/json', 'X-Tdai-Service-Id': process.env.MULTICA_AGENT_MEMORY_INSTANCE_ID || 'default' },
-          body: JSON.stringify({ team_id: nativeTeam, skill_id: nativeSkill }),
+          body: JSON.stringify({ team_id: nativeTeam, skill_id: nativeSkillID }),
         });
         expect(removed.status).toBe(200);
       }
