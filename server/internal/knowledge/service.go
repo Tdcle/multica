@@ -83,9 +83,8 @@ func (s *Service) IdentityFor(ctx context.Context, user db.User) (Identity, erro
 			"user_key": identity.Key, "auth_provider": "multica",
 			"external_id": util.UUIDToString(user.ID), "display_name": user.Name,
 		}
-		if user.Email != "" {
-			input["email"] = user.Email
-		}
+		// Multica's UUID owns this identity. Optional native email validation
+		// must not prevent provisioning local accounts such as dev@localhost.
 		if err := s.Client.Call(ctx, s.InstanceID, "/v3/meta/user/create-with-key", s.Client.AdminKey, input, &created); err != nil {
 			return Identity{}, err
 		}
