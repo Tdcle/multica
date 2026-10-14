@@ -21,7 +21,7 @@ test("knowledge spaces can be created, detached and rebound without crossing wor
   const suffix = `${Date.now()}-${process.pid}`;
   const owner = new TestApiClient();
   const outsider = new TestApiClient();
-  await owner.login(`knowledge-owner-${suffix}@multica.ai`, "Knowledge owner");
+  await owner.login(`knowledge-owner-${suffix}@localhost`, "Knowledge owner");
   await outsider.login(`knowledge-outsider-${suffix}@multica.ai`, "Knowledge outsider");
   const alpha = await owner.ensureWorkspace("Knowledge Alpha", `knowledge-alpha-${suffix}`);
   const betaResponse = await call(owner, alpha.id, "/api/workspaces", {
