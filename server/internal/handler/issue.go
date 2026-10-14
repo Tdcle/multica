@@ -3968,6 +3968,12 @@ func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue
 	if err != nil {
 		return nil, fmt.Errorf("list issue attachment URLs: %w", err)
 	}
+	if err := qtx.DeleteKnowledgeForIssue(ctx, db.DeleteKnowledgeForIssueParams{
+		WorkspaceID: issue.WorkspaceID,
+		IssueID:     issue.ID,
+	}); err != nil {
+		return nil, fmt.Errorf("delete issue knowledge jobs: %w", err)
+	}
 	if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,

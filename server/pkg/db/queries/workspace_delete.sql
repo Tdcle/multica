@@ -262,6 +262,12 @@ WHERE webhook_delivery.workspace_id = $1
 -- before this step; what is left is keyed by the workspace or by one of the
 -- workspace-scoped id sets below.
 WITH
+deleted_knowledge_extractions AS (
+    DELETE FROM knowledge_extraction WHERE workspace_id = $1
+),
+deleted_workspace_knowledge AS (
+    DELETE FROM workspace_knowledge WHERE workspace_id = $1
+),
 ws_agents AS MATERIALIZED (
     SELECT id FROM agent WHERE workspace_id = $1
 ),

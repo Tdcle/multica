@@ -33,6 +33,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/telegram"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	"github.com/multica-ai/multica/server/internal/issuestatus"
+	"github.com/multica-ai/multica/server/internal/knowledge"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -172,6 +173,7 @@ type DaemonPendingWorkNotifier interface {
 }
 
 type Handler struct {
+	Knowledge *knowledge.Service
 	Queries   *db.Queries
 	DB        dbExecutor
 	TxStarter txStarter

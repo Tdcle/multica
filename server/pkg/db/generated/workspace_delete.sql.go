@@ -251,6 +251,12 @@ func (q *Queries) DeleteWorkspaceIssueRoots(ctx context.Context, workspaceID pgt
 
 const deleteWorkspaceLeafData = `-- name: DeleteWorkspaceLeafData :exec
 WITH
+deleted_knowledge_extractions AS (
+    DELETE FROM knowledge_extraction WHERE workspace_id = $1
+),
+deleted_workspace_knowledge AS (
+    DELETE FROM workspace_knowledge WHERE workspace_id = $1
+),
 ws_agents AS MATERIALIZED (
     SELECT id FROM agent WHERE workspace_id = $1
 ),

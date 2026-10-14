@@ -332,6 +332,23 @@ multica issue create --title "Step 2" --parent <issue-id> --assignee <agent> --s
 multica issue create --title "Step 3" --parent <issue-id> --assignee <agent> --stage 3 --status backlog
 ```
 
+## Workspace knowledge
+
+When a workspace has a bound knowledge space, each new task receives relevant
+team-shared historical memories in its per-turn context. Treat those memories as
+past evidence: check that they still apply and follow the current task's instructions.
+For additional context, run `multica knowledge search "<question or keywords>"`.
+It retrieves Chat Memory, Skill, Wiki and CodeGraph using their native engines.
+The JSON includes `items` and `warnings`; warnings identify incomplete retrieval.
+Filter with `--type chat_memory|skill|wiki|code_graph`. Each hit retains its asset
+ID, page reference or source task ID. Use `multica knowledge list` for available
+assets and processing status (paginate with `--limit` and `--offset`). Read full
+Skills with `multica knowledge read <asset-id>`, Wiki pages with `--ref <page-ref>`,
+code symbols with `--query <symbol>`, and Chat Memory with `--layer L0|L1|L2|L3`.
+Omitting a Wiki reference lists its pages; omitting a code query reads graph status.
+Task credentials always use their bound workspace and cannot select another space.
+Completing an issue triggers extraction; completing a chat does not.
+
 ## References
 
 `references/working-on-issues-source-map.md` — accurate `file:line` for every

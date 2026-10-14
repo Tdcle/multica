@@ -1,0 +1,141 @@
+diff --git a/MemoryKnowledge/bin/mcp.mjs b/MemoryKnowledge/bin/mcp.mjs
+index 693df85..c1af940 100644
+--- a/MemoryKnowledge/bin/mcp.mjs
++++ b/MemoryKnowledge/bin/mcp.mjs
+@@ -1,2 +1,3 @@
+ #!/usr/bin/env node
+-import "../dist/mcp/server.js";
++import { startMcpServer } from "../dist/mcp/server.mjs";
++startMcpServer();
+diff --git a/MemoryKnowledge/bin/server.mjs b/MemoryKnowledge/bin/server.mjs
+index fc81ee7..cc6d0b4 100644
+--- a/MemoryKnowledge/bin/server.mjs
++++ b/MemoryKnowledge/bin/server.mjs
+@@ -1,2 +1,3 @@
+ #!/usr/bin/env node
+-import "../dist/server.js";
++import { startServer } from "../dist/server.mjs";
++await startServer();
+diff --git a/MemoryKnowledge/package.json b/MemoryKnowledge/package.json
+index 33f5255..fbd5088 100644
+--- a/MemoryKnowledge/package.json
++++ b/MemoryKnowledge/package.json
+@@ -3,7 +3,7 @@
+   "version": "0.1.0",
+   "description": "Standalone knowledge service — Code-Graph + LLM-Wiki engine for user-side deployment",
+   "type": "module",
+-  "main": "./dist/server.js",
++  "main": "./dist/server.mjs",
+   "bin": {
+     "knowledge-server": "./bin/server.mjs",
+     "knowledge-mcp": "./bin/mcp.mjs"
+diff --git a/MemoryKnowledge/src/logger.ts b/MemoryKnowledge/src/logger.ts
+index b718ca4..b7f8d4a 100644
+--- a/MemoryKnowledge/src/logger.ts
++++ b/MemoryKnowledge/src/logger.ts
+@@ -23,13 +23,14 @@ function format(level: Level, tag: string, msg: string, data?: unknown) {
+   return `${prefix} ${msg}`;
+ }
+ 
+-export function createLogger(tag: string) {
++export function createLogger(tag: string, options: { stderr?: boolean } = {}) {
++  const write = options.stderr ? console.error : console.log;
+   return {
+     debug(msg: string, data?: unknown) {
+-      if (shouldLog("debug")) console.log(format("debug", tag, msg, data));
++      if (shouldLog("debug")) write(format("debug", tag, msg, data));
+     },
+     info(msg: string, data?: unknown) {
+-      if (shouldLog("info")) console.log(format("info", tag, msg, data));
++      if (shouldLog("info")) write(format("info", tag, msg, data));
+     },
+     warn(msg: string, data?: unknown) {
+       if (shouldLog("warn")) console.warn(format("warn", tag, msg, data));
+diff --git a/MemoryKnowledge/src/mcp/http-client.ts b/MemoryKnowledge/src/mcp/http-client.ts
+index a98df80..a770183 100644
+--- a/MemoryKnowledge/src/mcp/http-client.ts
++++ b/MemoryKnowledge/src/mcp/http-client.ts
+@@ -8,12 +8,14 @@
+ 
+ import { createLogger } from "../logger.js";
+ 
+-const log = createLogger("mcp-http");
++const log = createLogger("mcp-http", { stderr: true });
+ 
+ export interface HttpClientOptions {
+   baseUrl: string;
+   /** Optional bearer token for auth. */
+   token?: string;
++  /** Fixed tenant for this server; never inferred from tool arguments. */
++  serviceId?: string;
+ }
+ 
+ export interface ApiResponse {
+@@ -35,6 +37,7 @@ export async function callApi(
+ ): Promise<unknown> {
+   const url = `${opts.baseUrl.replace(/\/$/, "")}/v3${endpoint}`;
+   const headers: Record<string, string> = { "Content-Type": "application/json" };
++  headers["x-tdai-service-id"] = opts.serviceId || "default";
+   if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
+ 
+   log.debug(`POST ${url}`);
+diff --git a/MemoryKnowledge/src/mcp/server.ts b/MemoryKnowledge/src/mcp/server.ts
+index b929c75..e378add 100644
+--- a/MemoryKnowledge/src/mcp/server.ts
++++ b/MemoryKnowledge/src/mcp/server.ts
+@@ -22,7 +22,7 @@ import { MCP_TOOLS, type McpToolDef } from "./tools.js";
+ import { callApi, type HttpClientOptions } from "./http-client.js";
+ import { createLogger } from "../logger.js";
+ 
+-const log = createLogger("mcp-server");
++const log = createLogger("mcp-server", { stderr: true });
+ 
+ export function createMcpServer(httpOpts: HttpClientOptions): Server {
+   const toolMap = new Map<string, McpToolDef>();
+@@ -89,14 +89,14 @@ export function createMcpServer(httpOpts: HttpClientOptions): Server {
+   return server;
+ }
+ 
+-// Start server when run directly
+-if (import.meta.url === `file://${process.argv[1]}`) {
++export function startMcpServer(): void {
+   const baseUrl = process.env.KNOWLEDGE_API_URL || "http://localhost:8421";
+   const token = process.env.KNOWLEDGE_API_TOKEN;
+ 
+   log.info(`MCP server starting, API URL: ${baseUrl}`);
+ 
+-  const server = createMcpServer({ baseUrl, token });
++  const serviceId = process.env.KNOWLEDGE_SERVICE_ID || "default";
++  const server = createMcpServer({ baseUrl, token, serviceId });
+   const transport = new StdioServerTransport();
+ 
+   server.connect(transport).then(() => {
+@@ -106,3 +106,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
+     process.exit(1);
+   });
+ }
++
++// Start the server for both the source and bundled direct entry points.
++if (import.meta.url === `file://${process.argv[1]}`) startMcpServer();
+diff --git a/MemoryKnowledge/src/server.ts b/MemoryKnowledge/src/server.ts
+index 4499079..5dfc741 100644
+--- a/MemoryKnowledge/src/server.ts
++++ b/MemoryKnowledge/src/server.ts
+@@ -154,7 +154,7 @@ export function createApp() {
+   return { app, config, knowledgeModule, knowledgeTelemetry };
+ }
+ 
+-async function startServer(): Promise<void> {
++export async function startServer(): Promise<void> {
+   const { app, config, knowledgeTelemetry } = createApp();
+   await knowledgeTelemetry.initialize();
+ 
+@@ -173,7 +173,7 @@ async function startServer(): Promise<void> {
+     );
+   }
+ 
+-  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
++  const server = serve({ fetch: app.fetch, port: config.port, hostname: process.env.HOST || "0.0.0.0" }, (info) => {
+     log.info(`Knowledge service listening on http://localhost:${info.port}`);
+   });
+ 

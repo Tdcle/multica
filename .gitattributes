@@ -4,3 +4,6 @@ docker/entrypoint.sh text eol=lf
 
 # Default behavior
 * text=auto
+
+# Unified diffs use a single-space marker for empty context lines.
+services/agent-memory/patches/*.patch whitespace=-blank-at-eol,-blank-at-eof

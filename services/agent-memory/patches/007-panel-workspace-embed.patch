@@ -1,0 +1,151 @@
+diff --git a/MemoryPanel/web/src/layouts/GlobalHeader/index.tsx b/MemoryPanel/web/src/layouts/GlobalHeader/index.tsx
+--- a/MemoryPanel/web/src/layouts/GlobalHeader/index.tsx
++++ b/MemoryPanel/web/src/layouts/GlobalHeader/index.tsx
+@@ -5,6 +5,7 @@
+  *   右侧：同步状态指示 + 语言切换 + 用户头像菜单
+  */
+ import { useState } from 'react';
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import {
+   Avatar,
+   Button,
+@@ -106,14 +107,14 @@
+               >
+                 {t('header.profile')}
+               </List.Item>
+-              <List.Item
++              {!multicaEmbed && <List.Item
+                 onClick={() => {
+                   close();
+                   onLogout();
+                 }}
+               >
+                 {t('header.logout')}
+-              </List.Item>
++              </List.Item>}
+             </List>
+           )}
+         </Dropdown>
+diff --git a/MemoryPanel/web/src/layouts/GlobalHeader/TeamSwitcher.tsx b/MemoryPanel/web/src/layouts/GlobalHeader/TeamSwitcher.tsx
+--- a/MemoryPanel/web/src/layouts/GlobalHeader/TeamSwitcher.tsx
++++ b/MemoryPanel/web/src/layouts/GlobalHeader/TeamSwitcher.tsx
+@@ -9,6 +9,7 @@
+  * Header 上的「编辑 Team / 删除当前 Team」入口迁到了此处统一收纳。
+  */
+ import { useState } from 'react';
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import { useTranslation } from 'react-i18next';
+ import { Dropdown, Input, Button } from 'tea-component';
+ import { ChevronDownIcon, AddIcon, EditIcon, DeleteIcon } from 'tea-icons-react';
+@@ -45,7 +46,7 @@
+   const currentUserId = getPanelSession()?.user?.user_id ?? '';
+   // 是否可编辑 / 删除当前 active team：全局 admin 或当前 team 的 owner / admin
+   const canManageActiveTeam =
+-    !!active && (userRole === 'admin' || isTeamAdmin(active, currentUserId));
++    !!active && (multicaEmbed ? multicaEmbed.can_manage_space : userRole === 'admin' || isTeamAdmin(active, currentUserId));
+ 
+   function resetCreateForm() {
+     setShowCreateTeam(false);
+@@ -235,7 +236,7 @@
+             </div>
+ 
+             <div className="_memory-team-switcher-footer">
+-              {userRole !== 'admin' ? null : showCreateTeam ? (
++              {multicaEmbed || userRole !== 'admin' ? null : showCreateTeam ? (
+                 <div className="_memory-team-switcher-create-form">
+                   <Input
+                     autoFocus
+diff --git a/MemoryPanel/web/src/components/team/TeamManagementPanel.tsx b/MemoryPanel/web/src/components/team/TeamManagementPanel.tsx
+--- a/MemoryPanel/web/src/components/team/TeamManagementPanel.tsx
++++ b/MemoryPanel/web/src/components/team/TeamManagementPanel.tsx
+@@ -24,6 +24,7 @@
+  *   - EditTeamDialog 已迁到 TeamSwitcher 共用（@/layouts/GlobalHeader/TeamSwitcher）
+  */
+ 
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import { useState, useMemo } from 'react';
+ import { Button } from 'tea-component';
+ import { useTranslation } from 'react-i18next';
+@@ -77,6 +78,7 @@
+    */
+   section?: 'members' | 'agents' | 'all';
+ }) {
++  const canManageSpace = multicaEmbed ? multicaEmbed.can_manage_space : _isAdmin;
+   const showMembers = section === 'members' || section === 'all';
+   const showAgents = section === 'agents' || section === 'all';
+   const { activeTeamId, activeTeam, loading: teamsLoading } = useTeams();
+@@ -247,7 +249,7 @@
+           team={activeTeam}
+           ops={
+             <>
+-              {_isAdmin && (
++              {_isAdmin && !multicaEmbed && (
+                 <Button onClick={() => setShowCreateTeam(true)} title={t('team.createTeam')}>
+                   <AddIcon size={14} /> {t('team.createTeam')}
+                 </Button>
+@@ -274,7 +276,7 @@
+         </div>
+       ) : !activeTeam ? (
+         <EmptyTeamState
+-          onCreateTeam={_isAdmin ? () => setShowCreateTeam(true) : undefined}
++          onCreateTeam={_isAdmin && !multicaEmbed ? () => setShowCreateTeam(true) : undefined}
+         />
+       ) : (
+         <>
+@@ -284,12 +286,12 @@
+               team={activeTeam}
+               currentUser={currentUser}
+               onAdd={() => setShowAddMember(true)}
+-              isAdmin={_isAdmin}
++              isAdmin={canManageSpace}
+             />
+           )}
+ 
+           {/* === 默认 Agent 模板（仅全局 admin 可见）=== */}
+-          {showAgents && _isAdmin && (
++          {showAgents && canManageSpace && (
+             <DefaultAgentTemplateSection
+               teamId={activeTeam.team_id}
+               teamName={activeTeam.name}
+@@ -338,7 +340,7 @@
+           onClose={() => setShowAddMember(false)}
+           onCreatedUser={setCreatedUserKeyInfo}
+           currentUser={currentUser}
+-          isAdmin={_isAdmin}
++          isAdmin={canManageSpace}
+         />
+       )}
+       {createdUserKeyInfo && (
+diff --git a/MemoryPanel/web/src/services/useCurrentRole.ts b/MemoryPanel/web/src/services/useCurrentRole.ts
+--- a/MemoryPanel/web/src/services/useCurrentRole.ts
++++ b/MemoryPanel/web/src/services/useCurrentRole.ts
+@@ -12,6 +12,7 @@
+  *     被误判为非 admin（甚至 null）"。
+  */
+ import { useMemo } from 'react';
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import { useTeams, roleInTeam, isGlobalAdmin } from '@/services';
+ import { useAuthStore } from '@/stores/auth';
+ 
+@@ -22,6 +23,8 @@
+   const { activeTeam } = useTeams();
+   return useMemo(() => {
+     if (!auth) return null;
++    // Embedded workspace admins are resource users, not instance admins.
++    if (multicaEmbed) return 'member';
+     // 全局 admin：独立于 team，始终是 admin（不依赖 activeTeam / team.members 查询结果）
+     // isAdmin 来自 auth/verify 的 user_type === 'system_admin'，是唯一权威字段。
+     if (isGlobalAdmin(auth.user, auth.isAdmin)) return 'admin';
+diff --git a/MemoryPanel/web/src/lib/multicaEmbed.ts b/MemoryPanel/web/src/lib/multicaEmbed.ts
+new file mode 100644
+--- /dev/null
++++ b/MemoryPanel/web/src/lib/multicaEmbed.ts
+@@ -0,0 +1,8 @@
++// Set by the authenticated embedding bootstrap before loading the panel.
++declare global {
++  interface Window {
++    __MULTICA_PANEL_CONTEXT__?: { can_manage_space: boolean };
++  }
++}
++
++export const multicaEmbed = window.__MULTICA_PANEL_CONTEXT__;

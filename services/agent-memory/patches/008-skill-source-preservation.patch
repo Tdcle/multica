@@ -1,0 +1,32 @@
+diff --git a/MemoryCore/src/gateway/skill-schemas.ts b/MemoryCore/src/gateway/skill-schemas.ts
+--- a/MemoryCore/src/gateway/skill-schemas.ts
++++ b/MemoryCore/src/gateway/skill-schemas.ts
+@@ -238,6 +238,7 @@
+  * 详见 `docs/design/2026-07-17-skill-extract-direct-trigger-plan.md`。
+  */
+ export const extractRequestSchema = z.object({
++  preserve_source: z.boolean().optional(),
+   space_id: z.string().min(1)
+     .refine((v) => !v.includes("|"), "space_id must not contain '|'")
+     .optional(),
+diff --git a/MemoryCore/src/gateway/skill-handlers.ts b/MemoryCore/src/gateway/skill-handlers.ts
+--- a/MemoryCore/src/gateway/skill-handlers.ts
++++ b/MemoryCore/src/gateway/skill-handlers.ts
+@@ -1115,6 +1115,9 @@
+     (sum, m) => sum + Buffer.byteLength(JSON.stringify(m), "utf8"), 0,
+   );
+   const needCompress = rawBytes >= chunkMax;
++  // Trusted exporters split their immutable sources before calling this API.
++  // Never acknowledge a lossy archive when the caller requires full source.
++  if (input.preserve_source && needCompress) return errorEnvelope(413, "Source exceeds the configured Skill archive limit", requestId);
+ 
+   const prepared = prepareArchivePayload(
+     /* existing */ [],
+@@ -1529,6 +1532,7 @@
+     "/v3/skill/export": handleExport,
+     "/v3/skill/listing": handleListing,
+     "/v3/skill/extract": handleExtract,
++    "/v3/skill/extract/limits": async (_body, _auth, requestId, deps) => successEnvelope({ max_messages: 500, max_bytes: deps.getResolvedSkillConfig?.().extraction.chunkMaxBytes ?? DEFAULT_OVERSIZE_OPTIONS.chunkMaxBytes }, requestId),
+     "/v3/skill/extract/status": handleExtractStatus,
+     "/v3/skill/extract/retry": handleExtractRetry,
+     "/v3/skill/conversation/add": handleConversationAdd,
