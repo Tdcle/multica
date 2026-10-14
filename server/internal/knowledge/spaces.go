@@ -206,3 +206,66 @@ func (s *Service) forgetMissingMemory(ctx context.Context, memory db.AgentMemory
 	}
 	return tx.Commit(ctx)
 }
+
+// SyncMemoryCatalog uses native Agent identities and names for selectable memory
+// containers. Only the caller's own native agents are imported as writable memory.
+func (s *Service) SyncMemoryCatalog(ctx context.Context, workspaceID pgtype.UUID, user db.User, role string) error {
+	team, err := s.Queries.GetWorkspaceKnowledge(ctx, workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	identity, err := s.IdentityFor(ctx, user)
+	if err != nil {
+		return err
+	}
+	if err = s.SyncMember(ctx, team, identity, role); err != nil {
+		return err
+	}
+	for offset := 0; ; offset += 100 {
+		var page struct {
+			Items []struct {
+				ID       string `json:"agent_id"`
+				Name     string `json:"name"`
+				TeamID   string `json:"team_id"`
+				Owner    string `json:"owner_user_id"`
+				Status   string `json:"status"`
+				Metadata string `json:"metadata_json"`
+			} `json:"items"`
+			Total int `json:"total"`
+		}
+		if err = s.Client.Call(ctx, team.InstanceID, "/v3/meta/agent/list", identity.Key,
+			map[string]any{"team_id": team.TeamID, "limit": 100, "offset": offset}, &page); err != nil {
+			return err
+		}
+		for _, agent := range page.Items {
+			if agent.ID == "" || agent.Name == "" || agent.TeamID != team.TeamID || agent.Owner != identity.ID || agent.Status == "inactive" {
+				continue
+			}
+			var metadata struct {
+				MemoryID string `json:"multica_memory_id"`
+			}
+			_ = json.Unmarshal([]byte(agent.Metadata), &metadata)
+			if metadata.MemoryID != "" {
+				// Provisioning may have created the native agent before recording
+				// its ID locally. Never import a second row during that window.
+				err = s.Queries.UpdateNativeMemoryName(ctx, db.UpdateNativeMemoryNameParams{
+					WorkspaceID: workspaceID, InstanceID: team.InstanceID, NativeAgentID: agent.ID, Name: agent.Name,
+				})
+			} else {
+				err = s.Queries.RegisterNativeMemory(ctx, db.RegisterNativeMemoryParams{
+					WorkspaceID: workspaceID, Name: agent.Name, OwnerID: user.ID,
+					InstanceID: team.InstanceID, TeamID: team.TeamID, NativeAgentID: agent.ID, NativeUserID: identity.ID,
+				})
+			}
+			if err != nil {
+				return err
+			}
+		}
+		if len(page.Items) == 0 || offset+len(page.Items) >= page.Total {
+			return nil
+		}
+	}
+}

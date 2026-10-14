@@ -10,11 +10,15 @@ engines. Web and Desktop share the Memory console and agent memory controls.
 - Creating a Multica agent atomically creates and binds an independent pending
   memory. A background worker provisions its private native Agent container.
   Service outages never roll back agent creation; pending setup persists across
-  restarts and retries automatically. Each active memory binds to one agent.
+  restarts and retries automatically. Each agent has one active binding; multiple
+  agents can share the same memory.
 - The sidebar Memory entry opens the complete original console directly, using
   the Brain icon in both sidebar and desktop tabs. The agent list's Memory column
-  shows binding and setup status and opens detach/rebind controls. Its Memory
-  action manages independent resources, including unbound memories. An agent's
+  shows the bound container or a red unbound state and opens a direct dropdown. Its Memory
+  action manages independent resources, including unbound memories.
+  The binding list uses native Agent names. Refreshing it imports the current
+  user's native Agents from the workspace team and reconciles renamed containers;
+  the old workspace memory retains its original native identity and contents. An agent's
   detail Memory tab also supports detach, rebind and creation.
   Archiving an agent preserves its detached memory by default; the confirmation
   offers explicit permanent deletion. CLI uses `agent archive <id> --delete-memory`.

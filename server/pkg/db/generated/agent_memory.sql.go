@@ -406,6 +406,37 @@ func (q *Queries) MarkAgentMemoryDeleting(ctx context.Context, arg MarkAgentMemo
 	return err
 }
 
+const registerNativeMemory = `-- name: RegisterNativeMemory :exec
+INSERT INTO agent_memory (workspace_id,name,owner_id,instance_id,team_id,native_agent_id,native_user_id,status)
+VALUES ($1,$2,$3,$4,$5,$6,$7,'ready')
+ON CONFLICT (instance_id,native_agent_id) WHERE native_agent_id <> ''
+DO UPDATE SET name=EXCLUDED.name,updated_at=now()
+WHERE agent_memory.workspace_id=EXCLUDED.workspace_id AND agent_memory.name IS DISTINCT FROM EXCLUDED.name
+`
+
+type RegisterNativeMemoryParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	Name          string      `json:"name"`
+	OwnerID       pgtype.UUID `json:"owner_id"`
+	InstanceID    string      `json:"instance_id"`
+	TeamID        string      `json:"team_id"`
+	NativeAgentID string      `json:"native_agent_id"`
+	NativeUserID  string      `json:"native_user_id"`
+}
+
+func (q *Queries) RegisterNativeMemory(ctx context.Context, arg RegisterNativeMemoryParams) error {
+	_, err := q.db.Exec(ctx, registerNativeMemory,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.OwnerID,
+		arg.InstanceID,
+		arg.TeamID,
+		arg.NativeAgentID,
+		arg.NativeUserID,
+	)
+	return err
+}
+
 const retryAgentMemory = `-- name: RetryAgentMemory :one
 UPDATE agent_memory SET status=CASE WHEN status='deleting' THEN status ELSE 'pending' END,
     attempts=0,last_error=NULL,available_at=now(),updated_at=now()
@@ -467,5 +498,27 @@ type UnbindMemoryParams struct {
 
 func (q *Queries) UnbindMemory(ctx context.Context, arg UnbindMemoryParams) error {
 	_, err := q.db.Exec(ctx, unbindMemory, arg.WorkspaceID, arg.MemoryID)
+	return err
+}
+
+const updateNativeMemoryName = `-- name: UpdateNativeMemoryName :exec
+UPDATE agent_memory SET name=$4,updated_at=now()
+WHERE workspace_id=$1 AND instance_id=$2 AND native_agent_id=$3 AND name IS DISTINCT FROM $4
+`
+
+type UpdateNativeMemoryNameParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	InstanceID    string      `json:"instance_id"`
+	NativeAgentID string      `json:"native_agent_id"`
+	Name          string      `json:"name"`
+}
+
+func (q *Queries) UpdateNativeMemoryName(ctx context.Context, arg UpdateNativeMemoryNameParams) error {
+	_, err := q.db.Exec(ctx, updateNativeMemoryName,
+		arg.WorkspaceID,
+		arg.InstanceID,
+		arg.NativeAgentID,
+		arg.Name,
+	)
 	return err
 }

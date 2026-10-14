@@ -154,3 +154,5 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - `server/cmd/multica/cmd_agent.go`: explicit `--delete-memory` archive flag.
 
 - `server/migrations/425_shared_memory_lookup.up.sql` and `426_shared_memory_bindings.up.sql`: shared memory bindings retain per-agent uniqueness. Rolling back the unique memory index requires detaching additional consumers first; the migration fails rather than removing bindings.
+
+- `server/internal/knowledge/spaces.go`: binding choices reconcile native Agent names and import caller-owned containers from the workspace team, including those created in the original console.

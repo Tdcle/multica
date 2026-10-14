@@ -517,3 +517,57 @@ test('a metadata alias cannot expose another space\'s persisted Wiki content',as
   }
  }
 });
+
+test('memory binding choices match native Agent names and console-created containers', async ({page}) => {
+ test.setTimeout(60000);
+ const api=new TestApiClient();const suffix=`${Date.now()}-${process.pid}`;
+ await api.login(`memory-catalog-${suffix}@localhost`,'Memory catalog');
+ const workspace=await api.ensureWorkspace('Catalog workspace',`memory-catalog-${suffix}`);
+ await api.markUserOnboarded();
+ const agent=await api.createAgent('Original local label');
+ const auth={Authorization:`Bearer ${api.getToken()}`,'X-Workspace-ID':workspace.id,'Content-Type':'application/json'};
+ const apiCall=(path:string,method='GET',body?:unknown)=>fetch(apiBase+path,{method,headers:auth,...(body===undefined?{}:{body:JSON.stringify(body)})});
+ try {
+  await expect.poll(async()=>{const state=await (await apiCall(`/api/agents/${agent.id}/memory`)).json();return state.binding?.status;},{timeout:45000}).toBe('ready');
+  const original=(await (await apiCall(`/api/agents/${agent.id}/memory`)).json()).binding;
+  const sessionResponse=await apiCall('/api/knowledge/panel-session','POST');
+  expect(sessionResponse.status).toBe(200);
+  const session=await sessionResponse.json();
+  const ticket=new URLSearchParams(session.url.split('#')[1]).get('session')!;
+  const root=`${apiBase}/api/knowledge-panel/${workspace.id}/`;
+  const headers={'X-Multica-Knowledge-Session':ticket,'Content-Type':'application/json'};
+  const context=await (await fetch(root+'bootstrap',{headers})).json();
+  const native=async(action:string,body:unknown)=>{
+   const response=await fetch(root+'api/v1/meta/agent/'+action,{method:'POST',headers,body:JSON.stringify(body)});
+   expect(response.status,await response.clone().text()).toBe(200);
+   const envelope=await response.json();expect(envelope.code).toBe(0);return envelope.data;
+  };
+  await native('update',{agent_id:original.native_agent_id,name:'Native writer'});
+  const created=await native('create',{name:'Console shared memory',team_id:context.team_id,owner_user_id:context.session.user.user_id,visibility:'private'});
+  expect(created.agent_id).toBeTruthy();
+  const list=await apiCall('/api/memories');expect(list.status).toBe(200);
+  const memories=await list.json();
+  expect(memories.find((m:{id:string})=>m.id===original.id)).toMatchObject({name:'Native writer',native_agent_id:original.native_agent_id,agent_ids:[agent.id]});
+  const imported=memories.find((m:{native_agent_id:string})=>m.native_agent_id===created.agent_id);
+  expect(imported).toMatchObject({name:'Console shared memory',status:'ready',agent_ids:[]});
+  await native('update',{agent_id:created.agent_id,name:'Renamed console memory'});
+  const renamed=(await (await apiCall('/api/memories')).json()).find((m:{id:string})=>m.id===imported.id);
+  expect(renamed).toMatchObject({name:'Renamed console memory',native_agent_id:created.agent_id});
+  const nativeList=await native('list',{team_id:context.team_id,limit:100,offset:0});
+  expect(memories.map((m:{native_agent_id:string})=>m.native_agent_id).sort()).toEqual(nativeList.items.map((m:{agent_id:string})=>m.agent_id).sort());
+  const detached=await apiCall(`/api/agents/${agent.id}/memory`,'PUT',{memory_id:null});expect(detached.status).toBe(200);
+  await page.addInitScript(token=>{if(window.self!==window.top)return;localStorage.setItem('multica_token',token);localStorage.setItem('multica_locale','en');localStorage.setItem('multica:chat:isOpen','false');},api.getToken()!);
+  await page.goto(`/${workspace.slug}/agents`);
+  const cell=page.getByRole('button',{name:'Original local label Memory',exact:true});
+  await expect(cell).toHaveText('Not bound');await cell.click();
+  await expect(page.getByRole('menuitem',{name:'Native writer',exact:true})).toBeVisible();
+  await expect(page.getByRole('menuitem',{name:'Catalog workspace',exact:true})).toHaveCount(0);
+  await page.getByRole('menuitem',{name:'Renamed console memory',exact:true}).click();
+  await expect(cell).toHaveText('Renamed console memory');
+  const bound=(await (await apiCall(`/api/agents/${agent.id}/memory`)).json()).binding;
+  expect(bound.native_agent_id).toBe(created.agent_id);
+  expect(bound.id).toBe(imported.id);
+ } finally {
+  await apiCall(`/api/workspaces/${workspace.id}`,'DELETE');
+ }
+});
