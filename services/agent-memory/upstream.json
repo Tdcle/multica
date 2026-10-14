@@ -18,6 +18,7 @@
     "patches/013-team-skills.patch",
     "patches/014-skill-bundle-request-size.patch",
     "patches/015-bulk-skill-allocation.patch",
-    "patches/016-skill-detail-actions.patch"
+    "patches/016-skill-detail-actions.patch",
+    "patches/017-knowledge-space-terminology.patch"
   ]
 }

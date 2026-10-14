@@ -73,7 +73,7 @@
     "created": "생성일",
     "owner": "소유자",
     "access": "접근 권한",
-    "memory": "Memory"
+    "memory": "지식 공간"
   },
   "row": {
     "you": "나",
@@ -270,7 +270,7 @@
     "discard_dialog_description": "이 탭에 저장하지 않은 변경사항이 있습니다. 지금 나가면 변경사항이 사라집니다.",
     "discard_keep": "계속 편집",
     "discard_confirm": "변경사항 버리기",
-    "memory": "메모리"
+    "memory": "지식 공간"
   },
   "create_dialog": {
     "title_create": "에이전트 만들기",

@@ -180,7 +180,7 @@ test('one Skills entry, lossless team migration, shared bindings and task recall
     }
     const bindings = async (agent_id: string) => (await (await panel('meta/agent-fixed-asset/list', { agent_id })).json()).data.items;
     // No skill needs to be selected before opening the manager.
-    await frame.getByText('Agent Assets', { exact: true }).click();
+    await frame.getByText('Space Assets', { exact: true }).click();
     await expect(frame.getByText(name, { exact: true })).toHaveCount(0);
     await frame.getByRole('button', { name: 'Allocate', exact: true }).click();
     const dialog = frame.locator('._skill-transfer-modal');
