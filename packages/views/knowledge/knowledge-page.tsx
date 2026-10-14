@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+import { useAuthStore } from "@multica/core/auth";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
@@ -10,6 +12,39 @@ import { useT } from "../i18n";
 
 export function KnowledgePage() {
   const wsId = useWorkspaceId();
+  const userId = useAuthStore((state) => state.user?.id);
+  const frame = useRef<HTMLIFrameElement>(null);
+  useEffect(() => {
+    if (!userId) return;
+    const key = `multica:memory:onboarded:${userId}:${wsId}`;
+    const receive = (event: MessageEvent) => {
+      const source = frame.current?.contentWindow;
+      if (
+        !source || event.source !== source ||
+        event.data?.type !== "multica-memory-onboarding"
+      ) return;
+      if (event.data.action === "read") {
+        let completed = false;
+        try {
+          completed = window.localStorage.getItem(key) === "1";
+        } catch {
+          // Storage can be disabled; keep the console usable.
+        }
+        // Sandboxed frames have opaque origins; match the source before replying.
+        source.postMessage({
+          type: "multica-memory-onboarding-state", completed,
+        }, "*");
+      } else if (event.data.action === "write" && typeof event.data.completed === "boolean") {
+        try {
+          window.localStorage.setItem(key, event.data.completed ? "1" : "0");
+        } catch {
+          // A preference write must not interrupt the native console.
+        }
+      }
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [userId, wsId]);
   const { t } = useT("knowledge");
   const state = useQuery({
     ...knowledgeStateOptions(wsId),
@@ -32,6 +67,7 @@ export function KnowledgePage() {
       {panel.data?.url ? (
         <iframe
           key={panel.data.url}
+          ref={frame}
           src={panel.data.url}
           title={t(($) => $.title)}
           className="min-h-0 w-full flex-1 border-0"

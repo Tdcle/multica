@@ -26,7 +26,23 @@ test('original knowledge panel opens with the workspace identity and all knowled
   await expect(frame.getByText(/Unexpected Application Error|404 Not Found/)).not.toBeVisible();
   await expect(frame.getByText(`Panel ${suffix}`,{exact:true}).first()).toBeVisible();
   const skip = frame.getByRole('button', {name:/^Skip$|跳过/});
-  if (await skip.isVisible()) await skip.click();
+  await expect(skip).toBeVisible();
+  // Unrelated top-level messages must not be accepted as the frame's preference.
+  await page.evaluate(() => window.postMessage({type:'multica-memory-onboarding', action:'write', completed:true}, '*'));
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(key=>key.startsWith('multica:memory:onboarded:')).length)).toBe(0);
+  await skip.click();
+  await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(key=>key.startsWith('multica:memory:onboarded:') && localStorage.getItem(key)==='1').length)).toBe(1);
+  await page.getByRole('link',{name:/^Agents$|^智能体$/,exact:true}).click();
+  await page.getByRole('link',{name:'Memory',exact:true}).click();
+  await expect(frame.locator('._memory-app-shell')).toBeVisible();
+  await expect(frame.locator('body')).not.toHaveClass(/_guide-no-anim/);
+  await expect(skip).toHaveCount(0);
+  await page.reload();
+  await expect(frame.locator('._memory-app-shell')).toBeVisible();
+  await expect(skip).toHaveCount(0);
+  // Authentication stays in the isolated frame, not the persisted host preference.
+  await expect(frame.locator('body')).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('tdai-panel.session'))).toBeNull();
   for (const name of ['Wiki Knowledge Base','Code_Graph','Skills','Chat_Memory']) {
    const item=frame.locator('._memory-app-shell').getByText(name,{exact:true}).first();
    await expect(item).toBeVisible();

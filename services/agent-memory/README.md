@@ -51,6 +51,8 @@ engines. Web and Desktop share the Memory console and agent memory controls.
   Human reads retain the original catalog and native ACLs. On-demand CLI reads
   support native layers, Wiki references and code exploration.
 - The panel uses the caller's mapped native identity in an isolated frame.
+  Only the non-sensitive onboarding completion preference is persisted by the
+  host per user and workspace; session credentials remain in frame memory.
   Requests recheck workspace membership, the current binding, resource scope and
   ACLs. Credentials remain on the backend. Embedded space administration follows
   the current workspace owner/admin role; resource editing retains native ACLs.
