@@ -45,6 +45,7 @@ type extractionReceipt struct {
 // Run claims durable rows with a lease token. A stale worker cannot overwrite
 // the result of the worker that recovered its expired lease.
 func (s *Service) Run(ctx context.Context) {
+	go s.runMembershipSync(ctx)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {

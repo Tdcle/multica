@@ -922,6 +922,7 @@ type KnowledgeIdentity struct {
 	UserKeyCiphertext []byte             `json:"user_key_ciphertext"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	DisplayName       pgtype.Text        `json:"display_name"`
 }
 
 type LarkBindingToken struct {
@@ -1516,15 +1517,17 @@ type WorkspaceInvitation struct {
 }
 
 type WorkspaceKnowledge struct {
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	TeamID        string             `json:"team_id"`
-	InstanceID    string             `json:"instance_id"`
-	Name          string             `json:"name"`
-	MemoryAgentID string             `json:"memory_agent_id"`
-	MemoryUserID  string             `json:"memory_user_id"`
-	CreatedBy     pgtype.UUID        `json:"created_by"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	TeamID               string             `json:"team_id"`
+	InstanceID           string             `json:"instance_id"`
+	Name                 string             `json:"name"`
+	MemoryAgentID        string             `json:"memory_agent_id"`
+	MemoryUserID         string             `json:"memory_user_id"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ServiceUserID        pgtype.Text        `json:"service_user_id"`
+	ServiceKeyCiphertext []byte             `json:"service_key_ciphertext"`
 }
 
 type WorkspaceMcpServer struct {

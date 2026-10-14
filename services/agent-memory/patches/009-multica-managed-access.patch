@@ -1,0 +1,284 @@
+diff --git a/MemoryCore/src/metadata/router/v3-meta-router.ts b/MemoryCore/src/metadata/router/v3-meta-router.ts
+index 9eceabe..2c5f3b3 100644
+--- a/MemoryCore/src/metadata/router/v3-meta-router.ts
++++ b/MemoryCore/src/metadata/router/v3-meta-router.ts
+@@ -165,6 +165,14 @@ const routeTable: Record<string, Handler> = {
+     return s.updateUserKey(key_id, patch);
+   }),
+ 
++  // Managed integration ownership is restricted to the deployment administrator.
++  [`${V3_PREFIX}/team/managed-owner`]: bind(S.teamMemberRemoveSchema, async (d, c, s) => {
++    s.assertCanManageUsers(c);
++    await requireEntity(s, EntityType.User, d.user_id);
++    await s.rawStore.addTeamMember({ team_id: d.team_id, user_id: d.user_id, role: "admin", status: "active" });
++    return s.updateTeam(d.team_id, { owner_user_id: d.user_id });
++  }),
++
+   // Team
+   [`${V3_PREFIX}/team/create`]: bind(S.teamCreateSchema, (d, c, s) => s.createTeamForCaller(d, c)),
+   [`${V3_PREFIX}/team/get`]: bind(S.teamGetSchema, async (d, _c, s) => orNotFound(await s.getTeamById(d.team_id), "team_not_found", d.team_id)),
+@@ -592,6 +600,18 @@ export async function handleV3MetaRoute(
+         const runtime: V3MetaRouterRuntimeDeps = {
+           getSupportedAgents: deps.getSupportedAgents,
+         };
++        // Managed human identities cannot create a second account/permission
++        // authority, even when a legacy native key is used outside the embed.
++        const managedAuthorityWrite = pathname.startsWith(`${V3_PREFIX}/user-key/`) ||
++          [`${V3_PREFIX}/team/update`, `${V3_PREFIX}/team/delete`,
++           `${V3_PREFIX}/team-member/add`, `${V3_PREFIX}/team-member/remove`].includes(pathname);
++        if (managedAuthorityWrite && ctx.userId && !ctx.isSystemAdmin) {
++          const user = await svc.getUserById(ctx.userId);
++          if (user?.auth_provider === "multica" ||
++              (pathname.startsWith(`${V3_PREFIX}/user-key/`) && user?.auth_provider === "multica_service")) {
++            throw new MetadataError("permission_denied", "accounts and membership are managed in Multica");
++          }
++        }
+         const envelope = await handler(body, ctx, svc, requestId, runtime);
+         const httpStatus = envelope.code === 0 ? 200 : envelope.code >= 400 && envelope.code < 600 ? envelope.code : 200;
+         logMetaApiResponse(traceCtx, envelope, httpStatus);
+diff --git a/MemoryCore/src/metadata/service/metadata-service.ts b/MemoryCore/src/metadata/service/metadata-service.ts
+index 13bb45d..48cdf6b 100644
+--- a/MemoryCore/src/metadata/service/metadata-service.ts
++++ b/MemoryCore/src/metadata/service/metadata-service.ts
+@@ -622,10 +622,9 @@ export class MetadataService {
+       external_id: externalId,
+       auth_provider: provider,
+     };
+-    // 展示名只在"有值且目标账号当前为空"时补写：
+-    // 不覆盖人工改过的名字，也不把 IdP 的空值写进去把已有名字抹掉。
++    // Multica owns its managed display names. Other providers only fill blanks.
+     const incomingName = displayName?.trim();
+-    if (incomingName && !user.display_name) patch.display_name = incomingName;
++    if (incomingName && incomingName !== user.display_name && (provider === "multica" || !user.display_name)) patch.display_name = incomingName;
+ 
+     if (existing && existing.user_id === userId && !patch.display_name) return user;
+ 
+diff --git a/MemoryCore/src/metadata/service/user-visibility.ts b/MemoryCore/src/metadata/service/user-visibility.ts
+index 15a8878..ed1eb60 100644
+--- a/MemoryCore/src/metadata/service/user-visibility.ts
++++ b/MemoryCore/src/metadata/service/user-visibility.ts
+@@ -39,6 +39,7 @@ export function toPublicUser(user: UserEntity, ctx: V3AuthContext): UserPublic {
+     user_id: user.user_id,
+     user_type: user.user_type,
+     username: user.username,
++    display_name: user.display_name,
+     created_at: user.created_at,
+   };
+   if (isSystemAdminUser(user) && !ctx.isAdmin && ctx.userId !== user.user_id) {
+diff --git a/MemoryCore/src/metadata/store/mongodb-adapter.ts b/MemoryCore/src/metadata/store/mongodb-adapter.ts
+index 7e020aa..b98afec 100644
+--- a/MemoryCore/src/metadata/store/mongodb-adapter.ts
++++ b/MemoryCore/src/metadata/store/mongodb-adapter.ts
+@@ -796,7 +796,7 @@ export class MongoMetadataStore implements IMetadataStore {
+   }
+ 
+   async updateTeam(teamId: string, patch: Partial<TeamEntity>): Promise<TeamEntity | null> {
+-    await this.patchOne("meta_teams", { team_id: teamId }, patch, ["name", "description", "status", "metadata_json"], true);
++    await this.patchOne("meta_teams", { team_id: teamId }, patch, ["name", "description", "status", "metadata_json", "owner_user_id"], true);
+     return this.getTeamById(teamId);
+   }
+ 
+diff --git a/MemoryCore/src/metadata/store/sqlite-adapter.ts b/MemoryCore/src/metadata/store/sqlite-adapter.ts
+index 3b8d766..0fa3ab5 100644
+--- a/MemoryCore/src/metadata/store/sqlite-adapter.ts
++++ b/MemoryCore/src/metadata/store/sqlite-adapter.ts
+@@ -867,7 +867,7 @@ export class SqliteMetadataStore implements IMetadataStore {
+   }
+ 
+   updateTeam(teamId: string, patch: Partial<TeamEntity>): TeamEntity | null {
+-    const allowed = ["name", "description", "status", "metadata_json"] as const;
++    const allowed = ["name", "description", "status", "metadata_json", "owner_user_id"] as const;
+     this.applyUpdate("meta_teams", "team_id", teamId, allowed, patch);
+     return this.getTeamById(teamId);
+   }
+diff --git a/MemoryCore/src/metadata/types.ts b/MemoryCore/src/metadata/types.ts
+index a9e4419..42c5e8e 100644
+--- a/MemoryCore/src/metadata/types.ts
++++ b/MemoryCore/src/metadata/types.ts
+@@ -300,6 +300,7 @@ export interface AclEntity {
+ // ============================
+ 
+ export interface UserPublic {
++  display_name?: string | null;
+   user_id: string;
+   user_type: UserType;
+   username: string;
+diff --git a/MemoryPanel/web/src/components/team/MemberSection.tsx b/MemoryPanel/web/src/components/team/MemberSection.tsx
+index 649f183..4a0bfa1 100644
+--- a/MemoryPanel/web/src/components/team/MemberSection.tsx
++++ b/MemoryPanel/web/src/components/team/MemberSection.tsx
+@@ -3,6 +3,7 @@
+  * AddMemberDialog / CreatedUserKeyModal —— 添加已有用户 / 新建用户弹窗。
+  */
+ 
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import { useState } from 'react';
+ import { Alert, Button, Copy, Form, Input, Modal, Segment, Select, Switch, Tag } from 'tea-component';
+ import { useTranslation } from 'react-i18next';
+@@ -28,7 +29,7 @@ export function MemberSection({
+   const [removing, setRemoving] = useState<string | null>(null);
+   const { t } = useTranslation();
+   // 只有全局 admin 或 team admin/owner 才能添加成员；普通成员无此入口。
+-  const canAddMember = _globalAdmin || isTeamAdmin(team, currentUser);
++  const canAddMember = !multicaEmbed && (_globalAdmin || isTeamAdmin(team, currentUser));
+ 
+   async function handleRemove(userId: string) {
+     const ok = await tea.confirm({
+@@ -57,7 +58,7 @@ export function MemberSection({
+             <Tag size="sm">{team.team_id}</Tag>
+           </div>
+           <div className="_memory-section-subtitle">
+-            {t('member.subtitle', { name: team.name })}
++            {multicaEmbed ? t('member.multicaReadOnly') : t('member.subtitle', { name: team.name })}
+           </div>
+         </div>
+         {canAddMember && (
+@@ -69,7 +70,7 @@ export function MemberSection({
+       <div className="_memory-member-grid" data-guide="members-list">
+         {team.members.map((m) => {
+           const isOwner = team.owner_user_id === m.user_id;
+-          const canRemove = canRemoveMember(team, m.user_id, currentUser, _globalAdmin);
++          const canRemove = !multicaEmbed && canRemoveMember(team, m.user_id, currentUser, _globalAdmin);
+           return (
+             <MemberCard
+               key={m.user_id}
+diff --git a/MemoryPanel/web/src/i18n/en-US.ts b/MemoryPanel/web/src/i18n/en-US.ts
+index 1ffb5c6..02b7276 100644
+--- a/MemoryPanel/web/src/i18n/en-US.ts
++++ b/MemoryPanel/web/src/i18n/en-US.ts
+@@ -1117,6 +1117,7 @@ export const enUS = {
+ 
+   // ===== MemberSection =====
+   'member.title': 'Members ({{count}})',
++  'member.multicaReadOnly': 'Members and permissions are managed in Multica. This view is read-only.',
+   'member.subtitle':
+     'Human members of "{{name}}". Admins manage team assets, members use assets and create tasks · Click cards for details',
+   'member.add': 'Add Member',
+diff --git a/MemoryPanel/web/src/i18n/zh-CN.ts b/MemoryPanel/web/src/i18n/zh-CN.ts
+index bbed083..832218a 100644
+--- a/MemoryPanel/web/src/i18n/zh-CN.ts
++++ b/MemoryPanel/web/src/i18n/zh-CN.ts
+@@ -1097,6 +1097,7 @@ export const zhCN = {
+ 
+   // ===== MemberSection =====
+   'member.title': '成员（{{count}}）',
++  'member.multicaReadOnly': '成员与权限由 Multica 统一管理，此处仅供查看。',
+   'member.subtitle':
+     '「{{name}}」的人类成员；admin 可管理 team 资产，member 可使用资产并创建 task · 点击卡片查看详情',
+   'member.add': '添加成员',
+diff --git a/MemoryPanel/web/src/layouts/ConsoleLayout.tsx b/MemoryPanel/web/src/layouts/ConsoleLayout.tsx
+index ee3ef89..c004a33 100644
+--- a/MemoryPanel/web/src/layouts/ConsoleLayout.tsx
++++ b/MemoryPanel/web/src/layouts/ConsoleLayout.tsx
+@@ -3,6 +3,7 @@
+  *
+  * 基于 tea-component 的 `Layout` + `Menu` 组件，包含 TabBar、路由、菜单过滤等业务逻辑。
+  */
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import { useEffect, useMemo, useState, useCallback } from 'react';
+ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+ import { Layout, Menu } from 'tea-component';
+@@ -154,6 +155,7 @@ export function ConsoleLayout() {
+     const byGroup = new Map<string, (typeof PAGE_META)[PageId][]>();
+ 
+     for (const meta of Object.values(PAGE_META)) {
++      if (multicaEmbed && meta.id === 'api_keys') continue;
+       if (userRole === 'reviewer' && meta.id === 'team_members') continue;
+       // 「可观测」仅 system_admin 可见，且需面板开关开启 + 内核已配置 CH
+       if (meta.id === 'analytics') {
+diff --git a/MemoryPanel/web/src/layouts/GlobalHeader/TeamSwitcher.tsx b/MemoryPanel/web/src/layouts/GlobalHeader/TeamSwitcher.tsx
+index d6abf1c..e8ebf6c 100644
+--- a/MemoryPanel/web/src/layouts/GlobalHeader/TeamSwitcher.tsx
++++ b/MemoryPanel/web/src/layouts/GlobalHeader/TeamSwitcher.tsx
+@@ -46,7 +46,7 @@ export function TeamSwitcher({ userRole }: { userRole: TeamRole | null }) {
+   const currentUserId = getPanelSession()?.user?.user_id ?? '';
+   // 是否可编辑 / 删除当前 active team：全局 admin 或当前 team 的 owner / admin
+   const canManageActiveTeam =
+-    !!active && (multicaEmbed ? multicaEmbed.can_manage_space : userRole === 'admin' || isTeamAdmin(active, currentUserId));
++    !!active && !multicaEmbed && (userRole === 'admin' || isTeamAdmin(active, currentUserId));
+ 
+   function resetCreateForm() {
+     setShowCreateTeam(false);
+diff --git a/MemoryPanel/web/src/layouts/OnboardingGuide.tsx b/MemoryPanel/web/src/layouts/OnboardingGuide.tsx
+index cf18d43..87e0baf 100644
+--- a/MemoryPanel/web/src/layouts/OnboardingGuide.tsx
++++ b/MemoryPanel/web/src/layouts/OnboardingGuide.tsx
+@@ -14,6 +14,7 @@
+  * 健壮性：每步 element 选择器若在目标页缺失（如成员无「添加成员」权限），
+  * 自动 fallback 到全局 Header 品牌区，避免 Guide 因元素缺失而整体消失。
+  */
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+ import { useLocation, useNavigate } from 'react-router-dom';
+ import { useTranslation } from 'react-i18next';
+@@ -279,7 +280,11 @@ export function OnboardingGuide({
+   const location = useLocation();
+ 
+   const isAdmin = userRole === 'admin';
+-  const steps = useMemo(() => buildSteps(isAdmin ? 'admin' : 'member'), [isAdmin]);
++  const steps = useMemo(() => buildSteps(isAdmin ? 'admin' : 'member')
++    .filter(step => !multicaEmbed || step.path !== '/team/api-keys')
++    .map(step => multicaEmbed && step.path === '/team/members'
++      ? { ...step, titleKey: 'menu.team_members', descKey: 'member.multicaReadOnly' }
++      : step), [isAdmin]);
+ 
+   const [current, setCurrent] = useState(-1);
+   const pendingRef = useRef<number | null>(null);
+diff --git a/MemoryPanel/web/src/pages/GuidePage/index.tsx b/MemoryPanel/web/src/pages/GuidePage/index.tsx
+index 81121cf..cd77186 100644
+--- a/MemoryPanel/web/src/pages/GuidePage/index.tsx
++++ b/MemoryPanel/web/src/pages/GuidePage/index.tsx
+@@ -10,6 +10,7 @@
+  * 手动配置的配置文件路径与内容与 agents/setup-proxy.sh 的 write_* 函数保持一致
+  * （本页为只读展示，不执行写入）。API Key 一律使用占位符，不出现真实密钥。
+  */
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import { useEffect, useMemo, useState } from 'react';
+ import { useNavigate } from 'react-router-dom';
+ import { useTranslation } from 'react-i18next';
+@@ -459,12 +460,12 @@ export function GuidePage() {
+                   )}
+                 </div>
+ 
+-                <div className="guide-prepare-row">
++                {!multicaEmbed && <div className="guide-prepare-row">
+                   <b>{t('guide.prepare.key')}</b>
+                   <button type="button" className="guide-key-link" onClick={() => navigate('/team/api-keys')}>
+                     {t('guide.prepare.keyLink')} →
+                   </button>
+-                </div>
++                </div>}
+               </div>
+ 
+               <div className="guide-method-picker" role="radiogroup" aria-label={t('guide.method.aria')}>
+@@ -753,7 +754,7 @@ export function GuidePage() {
+               </ul>
+               <nav className="guide-practice-links" aria-label={`${t(activePracticeStep.title)} ${t('guide.practice.linksAria')}`}>
+                 <span>{t('guide.practice.related')}</span>
+-                {activePracticeStep.links.map((link) => (
++                {activePracticeStep.links.filter(link => !multicaEmbed || link.path !== '/team/api-keys').map((link) => (
+                   <button type="button" key={link.path} onClick={() => navigate(link.path)}>
+                     {t(link.label)} →
+                   </button>
+diff --git a/MemoryPanel/web/src/routes/index.tsx b/MemoryPanel/web/src/routes/index.tsx
+index 79a1b68..f1b6c54 100644
+--- a/MemoryPanel/web/src/routes/index.tsx
++++ b/MemoryPanel/web/src/routes/index.tsx
+@@ -4,6 +4,8 @@
+  * 使用 react-router 的 createBrowserRouter / RouterProvider。
+  * ConsoleLayout 作为父路由，各页面作为子路由。
+  */
++import { multicaEmbed } from '@/lib/multicaEmbed';
++import { Navigate } from 'react-router-dom';
+ import { createHashRouter, type RouteObject } from 'react-router-dom';
+ import { ConsoleLayout } from '@/layouts/ConsoleLayout';
+ import { WorkbenchPage } from '@/pages/WorkbenchPage';
+@@ -30,7 +32,7 @@ export const routes: RouteObject[] = [
+       { path: 'analytics', element: <AnalyticsPage /> },
+       { path: 'team/members', element: <MembersPage /> },
+       { path: 'team/agents', element: <AgentsPage /> },
+-      { path: 'team/api-keys', element: <ApiKeysPage /> },
++      { path: 'team/api-keys', element: multicaEmbed ? <Navigate to="/team/members" replace /> : <ApiKeysPage /> },
+       { path: 'guide', element: <GuidePage /> },
+     ],
+   },

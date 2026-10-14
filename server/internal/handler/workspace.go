@@ -692,6 +692,7 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.MembershipCache.Invalidate(r.Context(), uuidToString(target.UserID), workspaceID)
+	h.syncMemoryMembers(r.Context(), target.WorkspaceID)
 
 	user, err := h.Queries.GetUser(r.Context(), updatedMember.UserID)
 	if err != nil {
@@ -751,6 +752,7 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.MembershipCache.Invalidate(r.Context(), uuidToString(target.UserID), workspaceID)
+	h.syncMemoryMembers(r.Context(), target.WorkspaceID)
 
 	wsIDStr := uuidToString(requester.WorkspaceID)
 	logRevocation(result, wsIDStr, uuidToString(target.UserID))
@@ -794,6 +796,7 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.MembershipCache.Invalidate(r.Context(), uuidToString(member.UserID), workspaceID)
+	h.syncMemoryMembers(r.Context(), member.WorkspaceID)
 
 	userID := requestUserID(r)
 	logRevocation(result, workspaceID, uuidToString(member.UserID))
