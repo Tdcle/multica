@@ -178,7 +178,7 @@ export const appRoutes: RouteObject[] = [
             element: <RuntimeSettingsPage />,
             handle: { title: "Runtime" },
           },
-          { path: "knowledge", element: <KnowledgePage />, handle: { title: "Knowledge" } },
+          { path: "knowledge", element: <KnowledgePage />, handle: { title: "Memory" } },
           { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
           {
             path: "skills/:id",

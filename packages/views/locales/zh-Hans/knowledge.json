@@ -1,5 +1,5 @@
 {
-  "title": "知识库",
+  "title": "Memory",
   "description": "每个智能体拥有独立的记忆空间，解绑后可保留并重新绑定。",
   "create": "新建知识空间",
   "bind": "绑定已有空间",
@@ -26,7 +26,7 @@
   "loadError": "无法加载知识库。",
   "operationError": "操作未完成，请重试。",
   "panelUnavailable": "知识库面板暂不可用。",
-  "openPanel": "打开知识库面板",
+  "openPanel": "打开 Memory 控制台",
   "reloadPanel": "重新加载面板",
   "revision": "第 {{revision}} 次修订",
   "memories": "记忆空间",

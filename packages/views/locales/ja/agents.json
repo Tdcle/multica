@@ -64,7 +64,8 @@
     "model": "モデル",
     "created": "作成日時",
     "owner": "オーナー",
-    "access": "アクセス"
+    "access": "アクセス",
+    "memory": "Memory"
   },
   "row": {
     "you": "あなた",

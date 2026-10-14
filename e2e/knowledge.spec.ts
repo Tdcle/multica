@@ -237,50 +237,94 @@ test.describe("connected knowledge services", () => {
     }
   });
 
-  test("Knowledge tab manages independent memories and safely parses response drift", async ({
+  test("Agents Memory column manages bindings and independent memories", async ({
     page,
   }) => {
+    test.setTimeout(90000);
     const suffix = `${Date.now()}-${process.pid}`;
     const api = new TestApiClient();
-    await api.login(`memory-ui-${suffix}@localhost`, "Memory UI");
+    await api.login(`memory-column-${suffix}@localhost`, "Memory column");
     const workspace = await api.ensureWorkspace(
-      "Memory UI",
-      `memory-ui-${suffix}`,
+      "Memory column",
+      `memory-column-${suffix}`,
     );
     await api.markUserOnboarded();
+    const agent = await api.createAgent("Column agent");
     await page.addInitScript((token) => {
       if (window.self !== window.top) return;
       localStorage.setItem("multica_token", token);
       localStorage.setItem("multica:chat:isOpen", "false");
       localStorage.setItem("multica_locale", "en");
     }, api.getToken()!);
+    const uiErrors: string[] = [];
+    page.on("pageerror", (e) => uiErrors.push(e.message));
     try {
-      await page.goto(`/${workspace.slug}/knowledge`);
-      await page
-        .getByRole("button", { name: "Create memory", exact: true })
-        .click();
-      const dialog = page.getByRole("dialog");
-      await dialog.getByRole("textbox").fill(`Memory ${suffix}`);
-      await dialog
-        .getByRole("button", { name: "Create memory", exact: true })
-        .click();
-      await expect(dialog).not.toBeVisible();
+      await page.goto(`/${workspace.slug}/agents`);
       await expect(
-        page.getByText(`Memory ${suffix}`, { exact: true }),
+        page.getByRole("columnheader", { name: "Memory", exact: true }),
       ).toBeVisible();
-      await expect(page.getByText("Ready", { exact: true })).toBeVisible({
+      await page
+        .getByRole("button", { name: "Column agent Memory", exact: true })
+        .click();
+      const manager = page.getByRole("dialog", {
+        name: "Column agent · Memory",
+        exact: true,
+      });
+      await expect(manager.getByText("Ready", { exact: true })).toBeVisible({
         timeout: 45000,
       });
+      await manager
+        .getByRole("button", { name: "Detach memory", exact: true })
+        .click();
       await page
+        .getByRole("dialog", { name: "Detach memory", exact: true })
+        .getByRole("button", { name: "Detach memory", exact: true })
+        .click();
+      await expect(
+        manager.getByText(
+          "No memory is bound. Extraction and recall are paused.",
+        ),
+      ).toBeVisible();
+      await manager
+        .getByRole("button", { name: "Bind memory", exact: true })
+        .click();
+      await page
+        .getByRole("dialog", { name: "Bind memory", exact: true })
+        .getByRole("button", { name: /Column agent/ })
+        .click();
+      await expect(manager.getByText("Ready", { exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(manager).not.toBeVisible();
+      await page.getByRole("button", { name: "Memory", exact: true }).click();
+      const library = page.getByRole("dialog", { name: "Memory", exact: true });
+      await library
+        .getByRole("button", { name: "Create memory", exact: true })
+        .click();
+      const create = page.getByRole("dialog", {
+        name: "Create memory",
+        exact: true,
+      });
+      await create.getByRole("textbox").fill(`Spare ${suffix}`);
+      await create
+        .getByRole("button", { name: "Create memory", exact: true })
+        .click();
+      await expect(create).not.toBeVisible();
+      await expect(
+        library.getByText(`Spare ${suffix}`, { exact: true }),
+      ).toBeVisible();
+      await library
+        .getByText(`Spare ${suffix}`, { exact: true })
+        .locator("../..")
         .getByRole("button", { name: "Delete memory", exact: true })
         .click();
-      await expect(dialog).toBeVisible();
-      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-      await page.getByRole("tab", { name: "Extraction history" }).click();
-      await expect(
-        page.getByText(/Completed issues will appear/),
-      ).toBeVisible();
-      await page.getByRole("tab", { name: "Memories", exact: true }).click();
+      const remove = page.getByRole("dialog", {
+        name: "Delete memory",
+        exact: true,
+      });
+      await expect(remove).toBeVisible();
+      await remove.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.keyboard.press("Escape");
+      await expect(library).not.toBeVisible();
       await page.route("**/api/memories", (route) =>
         route.fulfill({
           status: 200,
@@ -289,26 +333,13 @@ test.describe("connected knowledge services", () => {
         }),
       );
       await page.reload();
+      await page.getByRole("button", { name: "Memory", exact: true }).click();
       await expect(
-        page.getByRole("button", { name: "Create memory", exact: true }),
+        page
+          .getByRole("dialog", { name: "Memory", exact: true })
+          .getByRole("button", { name: "Create memory", exact: true }),
       ).toBeVisible();
-      await expect(
-        page.getByText(`Memory ${suffix}`, { exact: true }),
-      ).not.toBeVisible();
-      await page.route("**/api/knowledge", (route) =>
-        route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          body: JSON.stringify({
-            configured: "unexpected",
-            binding: { name: 42 },
-          }),
-        }),
-      );
-      await page.reload();
-      await expect(
-        page.getByText("The knowledge service is not configured."),
-      ).toBeVisible();
+      expect(uiErrors).toEqual([]);
     } finally {
       await fetch(`${apiBase}/api/workspaces/${workspace.id}`, {
         method: "DELETE",

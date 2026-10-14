@@ -73,7 +73,8 @@
     "model": "Model",
     "created": "Created",
     "owner": "Owner",
-    "access": "Access"
+    "access": "Access",
+    "memory": "Memory"
   },
   "row": {
     "you": "You",

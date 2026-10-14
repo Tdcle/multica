@@ -1,5 +1,5 @@
 {
-  "title": "ナレッジ",
+  "title": "Memory",
   "reloadPanel": "パネルを再読み込み",
   "description": "各エージェントは独立したメモリを持ちます。解除したメモリは再接続できます。",
   "create": "スペースを作成",
@@ -27,7 +27,7 @@
   "loadError": "ナレッジを読み込めませんでした。",
   "operationError": "操作を完了できませんでした。",
   "panelUnavailable": "パネルを利用できません。",
-  "openPanel": "パネルを開く",
+  "openPanel": "Memory コンソールを開く",
   "revision": "リビジョン {{revision}}",
   "memories": "メモリ",
   "nativePanel": "管理パネル",

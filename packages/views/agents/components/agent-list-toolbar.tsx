@@ -57,6 +57,7 @@ import { PAGE_GUTTER } from "../../layout/page-header";
 import { cn } from "@multica/ui/lib/utils";
 
 const COLUMN_KEYS: AgentColumnKey[] = [
+  "memory",
   "status",
   "owner",
   "access",
@@ -188,6 +189,7 @@ export function AgentListToolbar({
   };
 
   const COLUMN_LABELS: Record<AgentColumnKey, string> = {
+    memory: t($ => $.columns.memory),
     status: t(($) => $.columns.status),
     owner: t(($) => $.columns.owner),
     access: t(($) => $.columns.access),

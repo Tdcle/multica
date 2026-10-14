@@ -32,6 +32,7 @@ export type RouteIconName =
   | "Monitor"
   | "Server"
   | "BookOpenText"
+  | "Brain"
   | "Settings"
   | "File"
   | "FileText"
@@ -99,7 +100,7 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   usage: { segment: "usage", icon: "BarChart3", navKey: "usage" },
   runtimes: { segment: "runtimes", icon: "Monitor", navKey: "runtimes" },
   skills: { segment: "skills", icon: "BookOpenText", navKey: "skills" },
-  knowledge: { segment: "knowledge", icon: "BookOpenText", navKey: "knowledge" },
+  knowledge: { segment: "knowledge", icon: "Brain", navKey: "knowledge" },
   settings: { segment: "settings", icon: "Settings", navKey: "settings" },
 };
 
