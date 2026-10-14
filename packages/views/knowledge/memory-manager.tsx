@@ -110,7 +110,7 @@ export function MemoryManager({
               {memory.nativeAgentId || memory.id}
             </p>
             <p className="mt-1 text-caption text-muted-foreground">
-              {memory.agentId
+              {memory.agentIds.length > 0
                 ? t(($) => $.memoryBound)
                 : t(($) => $.memoryUnbound)}
             </p>
@@ -243,7 +243,7 @@ export function MemoryManager({
             ) : (
               spaces.data
                 ?.filter(
-                  (memory) => !memory.agentId && memory.status !== "deleting",
+                  (memory) => memory.status !== "deleting",
                 )
                 .map((memory) => (
                   <Button

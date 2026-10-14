@@ -14,27 +14,31 @@ import (
 )
 
 type memoryResponse struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	Status        string  `json:"status"`
-	Error         *string `json:"error"`
-	AgentID       *string `json:"agent_id"`
-	NativeAgentID string  `json:"native_agent_id"`
-	CreatedAt     string  `json:"created_at"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	Status        string   `json:"status"`
+	Error         *string  `json:"error"`
+	AgentID       *string  `json:"agent_id"`
+	AgentIDs      []string `json:"agent_ids"`
+	NativeAgentID string   `json:"native_agent_id"`
+	CreatedAt     string   `json:"created_at"`
 }
 
-func memoryToResponse(memory db.AgentMemory, agentID pgtype.UUID) memoryResponse {
+func memoryToResponse(memory db.AgentMemory, agentIDs []pgtype.UUID) memoryResponse {
 	var issue *string
 	if memory.LastError.Valid {
 		value := memory.LastError.String
 		issue = &value
 	}
 	var bound *string
-	if agentID.Valid {
-		value := uuidToString(agentID)
-		bound = &value
+	ids := make([]string, 0, len(agentIDs))
+	for _, id := range agentIDs {
+		ids = append(ids, uuidToString(id))
 	}
-	return memoryResponse{ID: uuidToString(memory.ID), Name: memory.Name, Status: memory.Status, Error: issue, AgentID: bound, NativeAgentID: memory.NativeAgentID, CreatedAt: memory.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00")}
+	if len(ids) > 0 {
+		bound = &ids[0]
+	}
+	return memoryResponse{ID: uuidToString(memory.ID), Name: memory.Name, Status: memory.Status, Error: issue, AgentID: bound, AgentIDs: ids, NativeAgentID: memory.NativeAgentID, CreatedAt: memory.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00")}
 }
 
 func (h *Handler) memoryManager(w http.ResponseWriter, r *http.Request, memory db.AgentMemory) bool {
@@ -79,7 +83,7 @@ func (h *Handler) ListAgentMemories(w http.ResponseWriter, r *http.Request) {
 	}
 	result := []memoryResponse{}
 	for _, row := range rows {
-		result = append(result, memoryToResponse(row.AgentMemory, row.BoundAgentID))
+		result = append(result, memoryToResponse(row.AgentMemory, row.BoundAgentIds))
 	}
 	writeJSON(w, 200, result)
 }
@@ -110,7 +114,7 @@ func (h *Handler) CreateAgentMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to create memory")
 		return
 	}
-	writeJSON(w, 201, memoryToResponse(memory, pgtype.UUID{}))
+	writeJSON(w, 201, memoryToResponse(memory, nil))
 }
 
 func (h *Handler) GetAgentMemory(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +129,7 @@ func (h *Handler) GetAgentMemory(w http.ResponseWriter, r *http.Request) {
 	row, err := h.Queries.GetAgentMemoryBinding(r.Context(), db.GetAgentMemoryBindingParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
 	var memory *memoryResponse
 	if err == nil {
-		value := memoryToResponse(row.AgentMemory, agent.ID)
+		value := memoryToResponse(row.AgentMemory, row.BoundAgentIds)
 		memory = &value
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 500, "failed to read memory binding")
@@ -187,17 +191,6 @@ func (h *Handler) BindAgentMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to read binding")
 		return
 	}
-	if next.Valid && next != old.MemoryID {
-		var taken bool
-		if err = tx.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM agent_memory_binding WHERE memory_id=$1 AND workspace_id=$2)", next, agent.WorkspaceID).Scan(&taken); err != nil {
-			writeError(w, 500, "failed to check memory binding")
-			return
-		}
-		if taken {
-			writeError(w, 409, "memory is already bound to an agent")
-			return
-		}
-	}
 	if old.MemoryID.Valid {
 		if old.MemoryID == next {
 			writeJSON(w, 200, map[string]any{"updated": true})
@@ -241,11 +234,7 @@ func (h *Handler) BindAgentMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	if next.Valid {
 		if err = q.BindAgentMemory(r.Context(), db.BindAgentMemoryParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID, MemoryID: next}); err != nil {
-			if isUniqueViolation(err) {
-				writeError(w, 409, "memory is already bound to another agent")
-			} else {
-				writeError(w, 500, "failed to bind memory")
-			}
+			writeError(w, 500, "failed to bind memory")
 			return
 		}
 	}

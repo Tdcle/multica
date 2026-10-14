@@ -88,6 +88,7 @@ export const AgentMemorySchema = z
     status: z.string(),
     error: z.string().nullable().optional().default(null),
     agent_id: z.string().nullable().optional().default(null),
+    agent_ids: z.array(z.string()).optional(),
     native_agent_id: z.string().optional().default(""),
     created_at: z.string(),
   })
@@ -97,6 +98,7 @@ export const AgentMemorySchema = z
     status: v.status,
     error: v.error,
     agentId: v.agent_id,
+    agentIds: v.agent_ids ?? (v.agent_id ? [v.agent_id] : []),
     nativeAgentId: v.native_agent_id,
     createdAt: v.created_at,
   }));

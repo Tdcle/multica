@@ -8,7 +8,7 @@ test.skip(
   "Requires native memory services",
 );
 
-test("each agent automatically owns an independent, detachable memory lifecycle", async () => {
+test("agents create independent memories and can share them safely", async () => {
   test.setTimeout(120000);
   const api = new TestApiClient();
   const other = new TestApiClient();
@@ -78,12 +78,19 @@ test("each agent automatically owns an independent, detachable memory lifecycle"
       expect(response.status).toBe(400);
       expect((await state(a.id)).binding.id).toBe(am.id);
     }
-    await bind(b.id, am.id, 409);
+    await bind(b.id, am.id);
+    expect((await state(a.id)).binding.native_agent_id).toBe(am.native_agent_id);
+    expect((await state(b.id)).binding.native_agent_id).toBe(am.native_agent_id);
+    expect((await list()).length).toBe(2);
+    expect((await list()).find((m: { id: string }) => m.id === am.id).agent_ids.sort())
+      .toEqual([a.id, b.id].sort());
+    const unsafeArchive = await call(`/api/agents/${a.id}/archive?delete_memory=true`, "POST");
+    expect(unsafeArchive.status).toBe(409);
+    expect((await state(a.id)).binding.id).toBe(am.id);
     await bind(a.id, null);
     expect((await state(a.id)).binding).toBeNull();
-    expect(
-      (await list()).find((m: { id: string }) => m.id === am.id).agent_id,
-    ).toBeNull();
+    expect((await state(b.id)).binding.id).toBe(am.id);
+    expect((await list()).find((m: { id: string }) => m.id === am.id).agent_ids).toEqual([b.id]);
     await bind(b.id, am.id);
     expect((await state(b.id)).binding.id).toBe(am.id);
     expect(
@@ -141,7 +148,7 @@ test("each agent automatically owns an independent, detachable memory lifecycle"
   }
 });
 
-test("concurrent binding preserves the exclusive memory owner and the losing binding", async () => {
+test("concurrent binding shares one memory and detaching or archiving preserves other agents", async () => {
   test.setTimeout(60000);
   const api = new TestApiClient();
   const suffix = `${Date.now()}-${process.pid}`;
@@ -165,15 +172,10 @@ test("concurrent binding preserves the exclusive memory owner and the losing bin
     const a = await api.createAgent("Concurrent A");
     const b = await api.createAgent("Concurrent B");
     const created = await call("/api/memories", "POST", {
-      name: "Exclusive memory",
+      name: "Shared memory",
     });
     expect(created.status).toBe(201);
     const spare = await created.json();
-    const original = new Map<string, string>();
-    for (const id of [a.id, b.id]) {
-      const response = await call(`/api/agents/${id}/memory`);
-      original.set(id, (await response.json()).binding.id);
-    }
     const responses = await Promise.all(
       [a.id, b.id].map(async (id) => ({
         id,
@@ -182,15 +184,23 @@ test("concurrent binding preserves the exclusive memory owner and the losing bin
         }),
       })),
     );
-    expect(responses.map((r) => r.response.status).sort()).toEqual([200, 409]);
+    expect(responses.map((r) => r.response.status)).toEqual([200, 200]);
     for (const result of responses) {
       const state = await (
         await call(`/api/agents/${result.id}/memory`)
       ).json();
-      expect(state.binding.id).toBe(
-        result.response.status === 200 ? spare.id : original.get(result.id),
-      );
+      expect(state.binding.id).toBe(spare.id);
     }
+    const shared = (await (await call("/api/memories")).json())
+      .filter((memory: { id: string }) => memory.id === spare.id);
+    expect(shared).toHaveLength(1);
+    expect(shared[0].agent_ids.sort()).toEqual([a.id, b.id].sort());
+    const archived = await call(`/api/agents/${a.id}/archive?delete_memory=false`, "POST");
+    expect(archived.status).toBe(200);
+    expect((await (await call(`/api/agents/${b.id}/memory`)).json()).binding.id).toBe(spare.id);
+    const removed = await call(`/api/memories/${spare.id}`, "DELETE");
+    expect(removed.status).toBe(202);
+    expect((await (await call(`/api/agents/${b.id}/memory`)).json()).binding).toBeNull();
   } finally {
     await fetch(base + `/api/workspaces/${workspace.id}`, {
       method: "DELETE",

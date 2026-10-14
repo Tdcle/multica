@@ -2275,6 +2275,15 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if deleteMemory == "true" {
+			var shared bool
+			if err = tx.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM agent_memory_binding WHERE memory_id=$1 AND agent_id<>$2)", bound.MemoryID, agent.ID).Scan(&shared); err != nil {
+				writeError(w, 500, "failed to check shared memory")
+				return
+			}
+			if shared {
+				writeError(w, 409, "memory is shared with other agents; archive without deleting memory")
+				return
+			}
 			if !h.memoryManager(w, r, memory) {
 				return
 			}

@@ -786,11 +786,11 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   const paths = useWorkspacePaths();
   const memories = useQuery(memoryListOptions(wsId));
   const availableMemories = useMemo(
-    () => (memories.data ?? []).filter(memory => !memory.agentId && memory.status !== "deleting"),
+    () => (memories.data ?? []).filter(memory => memory.status !== "deleting"),
     [memories.data],
   );
   const memoryByAgent = useMemo(
-    () => new Map((memories.data ?? []).filter(memory => memory.agentId).map(memory => [memory.agentId, memory])),
+    () => new Map((memories.data ?? []).flatMap(memory => memory.agentIds.map(agentId => [agentId, memory] as const))),
     [memories.data],
   );
   const navigation = useNavigation();

@@ -2,14 +2,15 @@
 SELECT * FROM agent_memory WHERE id=$1 AND workspace_id=$2;
 
 -- name: GetAgentMemoryBinding :one
-SELECT sqlc.embed(m), b.agent_id AS bound_agent_id, b.created_at AS binding_created_at
+SELECT sqlc.embed(m), b.agent_id AS bound_agent_id, b.created_at AS binding_created_at,
+    ARRAY(SELECT agent_id FROM agent_memory_binding WHERE memory_id=m.id AND workspace_id=m.workspace_id ORDER BY agent_id)::uuid[] AS bound_agent_ids
 FROM agent_memory_binding b JOIN agent_memory m ON m.id=b.memory_id AND m.workspace_id=b.workspace_id
 WHERE b.workspace_id=$1 AND b.agent_id=$2;
 
 -- name: ListAgentMemories :many
-SELECT sqlc.embed(m), b.agent_id AS bound_agent_id, a.name AS bound_agent_name
-FROM agent_memory m LEFT JOIN agent_memory_binding b ON b.memory_id=m.id AND b.workspace_id=m.workspace_id
-LEFT JOIN agent a ON a.id=b.agent_id AND a.workspace_id=m.workspace_id
+SELECT sqlc.embed(m),
+    ARRAY(SELECT agent_id FROM agent_memory_binding WHERE memory_id=m.id AND workspace_id=m.workspace_id ORDER BY agent_id)::uuid[] AS bound_agent_ids
+FROM agent_memory m
 WHERE m.workspace_id=$1 AND (sqlc.arg(is_admin)::boolean OR m.owner_id=sqlc.arg(reader_id))
 ORDER BY m.created_at,m.id;
 

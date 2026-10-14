@@ -222,7 +222,8 @@ func (q *Queries) GetAgentMemory(ctx context.Context, arg GetAgentMemoryParams) 
 }
 
 const getAgentMemoryBinding = `-- name: GetAgentMemoryBinding :one
-SELECT m.id, m.workspace_id, m.name, m.owner_id, m.initial_agent_id, m.instance_id, m.team_id, m.native_agent_id, m.native_user_id, m.status, m.attempts, m.last_error, m.available_at, m.lease_until, m.lease_token, m.created_at, m.updated_at, b.agent_id AS bound_agent_id, b.created_at AS binding_created_at
+SELECT m.id, m.workspace_id, m.name, m.owner_id, m.initial_agent_id, m.instance_id, m.team_id, m.native_agent_id, m.native_user_id, m.status, m.attempts, m.last_error, m.available_at, m.lease_until, m.lease_token, m.created_at, m.updated_at, b.agent_id AS bound_agent_id, b.created_at AS binding_created_at,
+    ARRAY(SELECT agent_id FROM agent_memory_binding WHERE memory_id=m.id AND workspace_id=m.workspace_id ORDER BY agent_id)::uuid[] AS bound_agent_ids
 FROM agent_memory_binding b JOIN agent_memory m ON m.id=b.memory_id AND m.workspace_id=b.workspace_id
 WHERE b.workspace_id=$1 AND b.agent_id=$2
 `
@@ -236,6 +237,7 @@ type GetAgentMemoryBindingRow struct {
 	AgentMemory      AgentMemory        `json:"agent_memory"`
 	BoundAgentID     pgtype.UUID        `json:"bound_agent_id"`
 	BindingCreatedAt pgtype.Timestamptz `json:"binding_created_at"`
+	BoundAgentIds    []pgtype.UUID      `json:"bound_agent_ids"`
 }
 
 func (q *Queries) GetAgentMemoryBinding(ctx context.Context, arg GetAgentMemoryBindingParams) (GetAgentMemoryBindingRow, error) {
@@ -261,6 +263,7 @@ func (q *Queries) GetAgentMemoryBinding(ctx context.Context, arg GetAgentMemoryB
 		&i.AgentMemory.UpdatedAt,
 		&i.BoundAgentID,
 		&i.BindingCreatedAt,
+		&i.BoundAgentIds,
 	)
 	return i, err
 }
@@ -277,9 +280,9 @@ func (q *Queries) HasActiveMemoryExtractions(ctx context.Context, memoryID pgtyp
 }
 
 const listAgentMemories = `-- name: ListAgentMemories :many
-SELECT m.id, m.workspace_id, m.name, m.owner_id, m.initial_agent_id, m.instance_id, m.team_id, m.native_agent_id, m.native_user_id, m.status, m.attempts, m.last_error, m.available_at, m.lease_until, m.lease_token, m.created_at, m.updated_at, b.agent_id AS bound_agent_id, a.name AS bound_agent_name
-FROM agent_memory m LEFT JOIN agent_memory_binding b ON b.memory_id=m.id AND b.workspace_id=m.workspace_id
-LEFT JOIN agent a ON a.id=b.agent_id AND a.workspace_id=m.workspace_id
+SELECT m.id, m.workspace_id, m.name, m.owner_id, m.initial_agent_id, m.instance_id, m.team_id, m.native_agent_id, m.native_user_id, m.status, m.attempts, m.last_error, m.available_at, m.lease_until, m.lease_token, m.created_at, m.updated_at,
+    ARRAY(SELECT agent_id FROM agent_memory_binding WHERE memory_id=m.id AND workspace_id=m.workspace_id ORDER BY agent_id)::uuid[] AS bound_agent_ids
+FROM agent_memory m
 WHERE m.workspace_id=$1 AND ($2::boolean OR m.owner_id=$3)
 ORDER BY m.created_at,m.id
 `
@@ -291,9 +294,8 @@ type ListAgentMemoriesParams struct {
 }
 
 type ListAgentMemoriesRow struct {
-	AgentMemory    AgentMemory `json:"agent_memory"`
-	BoundAgentID   pgtype.UUID `json:"bound_agent_id"`
-	BoundAgentName pgtype.Text `json:"bound_agent_name"`
+	AgentMemory   AgentMemory   `json:"agent_memory"`
+	BoundAgentIds []pgtype.UUID `json:"bound_agent_ids"`
 }
 
 func (q *Queries) ListAgentMemories(ctx context.Context, arg ListAgentMemoriesParams) ([]ListAgentMemoriesRow, error) {
@@ -323,8 +325,7 @@ func (q *Queries) ListAgentMemories(ctx context.Context, arg ListAgentMemoriesPa
 			&i.AgentMemory.LeaseToken,
 			&i.AgentMemory.CreatedAt,
 			&i.AgentMemory.UpdatedAt,
-			&i.BoundAgentID,
-			&i.BoundAgentName,
+			&i.BoundAgentIds,
 		); err != nil {
 			return nil, err
 		}

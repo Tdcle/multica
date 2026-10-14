@@ -344,10 +344,11 @@ State-changing (require an explicit instruction — do not run speculatively):
 
 Creating or copying an agent also creates a private memory with pending setup.
 An unavailable memory service does not block creation: setup retries automatically.
-An agent has one active memory binding; memories can be detached and rebound in
-its Memory tab. Archiving preserves the detached memory unless the user explicitly
-requests `multica agent archive <id> --delete-memory`. Deleting a memory retains
-the agent. Memory management requires a human account.
+An agent has one active memory binding; multiple agents may share the same memory.
+Use the Memory column menu to detach or bind a memory. Archiving preserves memory
+unless the user explicitly requests `multica agent archive <id> --delete-memory`.
+That option is rejected while other agents share the memory; delete the resource
+separately to detach every consumer. Deleting a memory retains the agents. Memory management requires a human account.
 
 ## References
 
