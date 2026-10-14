@@ -1,0 +1,117 @@
+diff --git a/MemoryCore/src/metadata/router/v3-meta-router.ts b/MemoryCore/src/metadata/router/v3-meta-router.ts
+index 2c5f3b3..c4f6334 100644
+--- a/MemoryCore/src/metadata/router/v3-meta-router.ts
++++ b/MemoryCore/src/metadata/router/v3-meta-router.ts
+@@ -605,10 +605,15 @@ export async function handleV3MetaRoute(
+         const managedAuthorityWrite = pathname.startsWith(`${V3_PREFIX}/user-key/`) ||
+           [`${V3_PREFIX}/team/update`, `${V3_PREFIX}/team/delete`,
+            `${V3_PREFIX}/team-member/add`, `${V3_PREFIX}/team-member/remove`].includes(pathname);
+-        if (managedAuthorityWrite && ctx.userId && !ctx.isSystemAdmin) {
++        const managedTaskAPI = ["task", "task-agent", "participation-log"]
++          .some((resource) => pathname.startsWith(`${V3_PREFIX}/${resource}/`));
++        if ((managedAuthorityWrite || managedTaskAPI) && ctx.userId && !ctx.isSystemAdmin) {
+           const user = await svc.getUserById(ctx.userId);
+-          if (user?.auth_provider === "multica" ||
+-              (pathname.startsWith(`${V3_PREFIX}/user-key/`) && user?.auth_provider === "multica_service")) {
++          if (managedTaskAPI && (user?.auth_provider === "multica" || user?.auth_provider === "multica_service")) {
++            throw new MetadataError("permission_denied", "tasks are managed in Multica");
++          }
++          if (managedAuthorityWrite && (user?.auth_provider === "multica" ||
++              (pathname.startsWith(`${V3_PREFIX}/user-key/`) && user?.auth_provider === "multica_service"))) {
+             throw new MetadataError("permission_denied", "accounts and membership are managed in Multica");
+           }
+         }
+diff --git a/MemoryCore/src/metadata/router/v3-task-source-router.ts b/MemoryCore/src/metadata/router/v3-task-source-router.ts
+index 96aeaa9..a72e856 100644
+--- a/MemoryCore/src/metadata/router/v3-task-source-router.ts
++++ b/MemoryCore/src/metadata/router/v3-task-source-router.ts
+@@ -221,6 +221,14 @@ export async function handleV3TaskSourceRoute(
+     return true;
+   }
+ 
++  if (auth.ctx.userId && !auth.ctx.isSystemAdmin) {
++    const user = await svc.getUserById(auth.ctx.userId);
++    if (user?.auth_provider === "multica" || user?.auth_provider === "multica_service") {
++      sendJson(res, 403, errorEnvelope(403, "permission_denied: tasks are managed in Multica", requestId));
++      return true;
++    }
++  }
++
+   const body = await parseJsonBody(req);
+   // providers 不需要令牌（只是列出已启用来源）；其余接口必须有。
+   const needsCred = pathname !== `${V3_TASK_SOURCE_PREFIX}/providers`;
+diff --git a/MemoryPanel/web/src/layouts/ConsoleLayout.tsx b/MemoryPanel/web/src/layouts/ConsoleLayout.tsx
+index c004a33..2ba819d 100644
+--- a/MemoryPanel/web/src/layouts/ConsoleLayout.tsx
++++ b/MemoryPanel/web/src/layouts/ConsoleLayout.tsx
+@@ -62,7 +62,7 @@ export function ConsoleLayout() {
+     const match = Object.entries(PATH_TO_PAGE).find(
+       ([path]) => path !== '/' && location.pathname.startsWith(path),
+     );
+-    return match ? match[1] : 'workbench_board';
++    return match ? match[1] : multicaEmbed ? 'chat_memory' : 'workbench_board';
+   }, [location.pathname]);
+ 
+   useEffect(() => {
+@@ -155,7 +155,7 @@ export function ConsoleLayout() {
+     const byGroup = new Map<string, (typeof PAGE_META)[PageId][]>();
+ 
+     for (const meta of Object.values(PAGE_META)) {
+-      if (multicaEmbed && meta.id === 'api_keys') continue;
++      if (multicaEmbed && (meta.id === 'api_keys' || meta.id === 'workbench_board')) continue;
+       if (userRole === 'reviewer' && meta.id === 'team_members') continue;
+       // 「可观测」仅 system_admin 可见，且需面板开关开启 + 内核已配置 CH
+       if (meta.id === 'analytics') {
+diff --git a/MemoryPanel/web/src/pages/GuidePage/MemCommands.tsx b/MemoryPanel/web/src/pages/GuidePage/MemCommands.tsx
+index 105302a..6339eb3 100644
+--- a/MemoryPanel/web/src/pages/GuidePage/MemCommands.tsx
++++ b/MemoryPanel/web/src/pages/GuidePage/MemCommands.tsx
+@@ -9,6 +9,7 @@
+  *
+  * 纯展示组件，数据来自 memCommands.ts，复制交互复用 CopyButton。
+  */
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import { useTranslation } from 'react-i18next';
+ import { CopyButton } from './CopyButton';
+ import { MEM_COMMANDS, MEM_EXAMPLES_KEY, MEM_GROUPS, type MemCommand } from './memCommandsData';
+@@ -59,7 +60,9 @@ function CommandCard({ cmd }: { cmd: MemCommand }) {
+ 
+ export function MemCommands() {
+   const { t } = useTranslation();
+-  const examples = t(MEM_EXAMPLES_KEY);
++  const examples = t(MEM_EXAMPLES_KEY).split('\n')
++    .filter((line) => !multicaEmbed || !/^mem:(create-task|update-task)\b/i.test(line.trim()))
++    .join('\n');
+ 
+   return (
+     <section className="guide-surface guide-mem">
+@@ -70,7 +73,7 @@ export function MemCommands() {
+       </div>
+ 
+       {MEM_GROUPS.map((group) => {
+-        const commands = MEM_COMMANDS.filter((cmd) => cmd.group === group.id);
++        const commands = MEM_COMMANDS.filter((cmd) => cmd.group === group.id && (!multicaEmbed || cmd.group !== 'task'));
+         if (commands.length === 0) return null;
+         return (
+           <div className="guide-mem-group" key={group.id}>
+diff --git a/MemoryPanel/web/src/routes/index.tsx b/MemoryPanel/web/src/routes/index.tsx
+index f1b6c54..86ddbe6 100644
+--- a/MemoryPanel/web/src/routes/index.tsx
++++ b/MemoryPanel/web/src/routes/index.tsx
+@@ -24,7 +24,7 @@ export const routes: RouteObject[] = [
+     path: '/',
+     element: <ConsoleLayout />,
+     children: [
+-      { index: true, element: <WorkbenchPage /> },
++      { index: true, element: multicaEmbed ? <Navigate to="/memory" replace /> : <WorkbenchPage /> },
+       { path: 'wiki', element: <WikiPage /> },
+       { path: 'code', element: <CodePage /> },
+       { path: 'skills', element: <SkillsPage /> },
+@@ -34,6 +34,7 @@ export const routes: RouteObject[] = [
+       { path: 'team/agents', element: <AgentsPage /> },
+       { path: 'team/api-keys', element: multicaEmbed ? <Navigate to="/team/members" replace /> : <ApiKeysPage /> },
+       { path: 'guide', element: <GuidePage /> },
++      ...(multicaEmbed ? [{ path: '*', element: <Navigate to="/memory" replace /> }] : []),
+     ],
+   },
+ ];
