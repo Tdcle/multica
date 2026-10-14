@@ -74,7 +74,7 @@
     "created": "Created",
     "owner": "Owner",
     "access": "Access",
-    "memory": "Memory"
+    "memory": "Knowledge space"
   },
   "row": {
     "you": "You",
@@ -279,7 +279,7 @@
     "discard_dialog_description": "You have unsaved changes in this tab. Leaving now will discard them.",
     "discard_keep": "Keep editing",
     "discard_confirm": "Discard changes",
-    "memory": "Memories"
+    "memory": "Knowledge space"
   },
   "creation_studio": {
     "title": "Create an agent",

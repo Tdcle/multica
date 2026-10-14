@@ -65,7 +65,7 @@
     "created": "作成日時",
     "owner": "オーナー",
     "access": "アクセス",
-    "memory": "Memory"
+    "memory": "ナレッジスペース"
   },
   "row": {
     "you": "あなた",
@@ -262,7 +262,7 @@
     "discard_dialog_description": "このタブに保存していない変更があります。今移動すると変更は破棄されます。",
     "discard_keep": "編集を続ける",
     "discard_confirm": "変更を破棄",
-    "memory": "メモリ"
+    "memory": "ナレッジスペース"
   },
   "create_dialog": {
     "title_create": "エージェントを作成",

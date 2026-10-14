@@ -418,13 +418,20 @@ test("Memory shares Multica appearance across pages, dialogs, graph and live the
           await screenshot(`skill-import-${theme}`);
           await closeDialog();
         } else if (route === "/team/agents") {
-          await screenshot(`agents-${theme}`);
+          await expect(frame.getByRole("heading", { name: "Knowledge Spaces", exact: true })).toBeVisible();
+          await expect(frame.locator(".multica-memory-nav").getByRole("button", { name: "Agents", exact: true })).toHaveCount(0);
+          await frame.getByRole("button", { name: "New Knowledge Space", exact: true }).click();
+          await expect(frame.getByRole("heading", { name: "New Knowledge Space", exact: true })).toBeVisible();
+          await expect(frame.locator(".tea-dialog")).toContainText("Context Prompt");
+          await closeDialog();
+          await screenshot(`knowledge-spaces-${theme}`);
           await frame
             .locator('[data-guide="agent-name-editable"]')
             .first()
             .click();
           await expect(frame.locator(".tea-dialog")).toBeVisible();
-          await screenshot(`agent-detail-${theme}`);
+          await expect(frame.locator(".tea-dialog")).toContainText(/Knowledge space details/i);
+          await screenshot(`knowledge-space-detail-${theme}`);
           await closeDialog();
         } else if (route === "/guide") {
           for (let index = 0; index < 3; index++) {
@@ -461,6 +468,29 @@ test("Memory shares Multica appearance across pages, dialogs, graph and live the
       await navigate("/memory");
       await screenshot(`responsive-${width}`);
     }
+    // Product terminology changes with language; IDs and native routes remain stable.
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await frame.getByRole("button", { name: "English", exact: true }).click();
+    await frame.getByText("中文", { exact: true }).click();
+    await navigate("/team/agents");
+    await expect(frame.getByRole("heading", { name: "知识空间", exact: true })).toBeVisible();
+    await frame.getByRole("button", { name: "新建知识空间", exact: true }).click();
+    await expect(frame.getByRole("heading", { name: "新建知识空间", exact: true })).toBeVisible();
+    await expect(frame.locator(".tea-dialog")).toContainText("上下文提示词");
+    await screenshot("knowledge-space-create-zh");
+    await closeDialog();
+    await navigate("/skills");
+    await expect(frame.getByRole("radio", { name: "知识空间资产", exact: true })).toBeVisible();
+    await frame.getByRole("button", { name: "分配", exact: true }).click();
+    await expect(frame.locator("._skill-transfer-target")).toContainText("知识空间");
+    await screenshot("knowledge-space-allocation-zh");
+    await closeDialog();
+    await page.goto(`/${workspace.slug}/agents`);
+    await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Knowledge spaces", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Memory designer · Knowledge space", exact: true }).click();
+    await expect(page.getByRole("menuitem", { name: "Detach knowledge space", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
     expect(failedAssets).toEqual([]);
     expect(errors).toEqual([]);
   } catch (error) {

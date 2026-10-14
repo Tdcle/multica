@@ -73,7 +73,7 @@
     "created": "创建时间",
     "owner": "Owner",
     "access": "访问权限",
-    "memory": "Memory"
+    "memory": "知识空间"
   },
   "row": {
     "you": "你",
@@ -270,7 +270,7 @@
     "discard_dialog_description": "当前 tab 有未保存的修改，离开会丢弃这些修改。",
     "discard_keep": "继续编辑",
     "discard_confirm": "放弃修改",
-    "memory": "记忆空间"
+    "memory": "知识空间"
   },
   "creation_studio": {
     "title": "创建智能体",

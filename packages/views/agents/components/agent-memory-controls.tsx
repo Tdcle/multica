@@ -32,14 +32,14 @@ export function MemoryLibraryButton() {
     <>
       <CollectionPageHeaderAction
         icon={Brain}
-        label={t(($) => $.title)}
+        label={t(($) => $.memories)}
         variant="outline"
         onClick={() => setOpen(true)}
       />
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t(($) => $.title)}</DialogTitle>
+            <DialogTitle>{t(($) => $.memories)}</DialogTitle>
             <DialogDescription>
               {t(($) => $.memoryDescription)}
             </DialogDescription>
@@ -119,7 +119,7 @@ export function AgentMemoryCell({
                   variant="ghost"
                   size="sm"
                   className="group h-auto min-w-0 max-w-full gap-1 px-1 py-1 text-caption"
-                  aria-label={`${agentName} Memory`}
+                  aria-label={t(($) => $.agentMemoryLabel, { agent: agentName })}
                 />
               }
             >
