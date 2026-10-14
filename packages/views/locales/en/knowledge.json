@@ -39,6 +39,7 @@
   "memoryBound": "Bound to an agent",
   "memoryUnbound": "Available to bind",
   "createMemory": "Create memory",
+  "noAvailableMemories": "No available memories",
   "bindMemory": "Bind memory",
   "changeMemory": "Change memory",
   "detachMemory": "Detach memory",

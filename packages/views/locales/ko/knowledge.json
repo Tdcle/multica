@@ -39,6 +39,7 @@
   "memoryBound": "에이전트에 연결됨",
   "memoryUnbound": "연결 가능",
   "createMemory": "메모리 만들기",
+  "noAvailableMemories": "연결 가능한 메모리가 없습니다",
   "bindMemory": "메모리 연결",
   "changeMemory": "메모리 변경",
   "detachMemory": "메모리 연결 해제",

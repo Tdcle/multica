@@ -39,6 +39,7 @@
   "memoryBound": "已绑定智能体",
   "memoryUnbound": "可绑定",
   "createMemory": "新建 Memory",
+  "noAvailableMemories": "暂无可绑定的 Memory",
   "bindMemory": "绑定 Memory",
   "changeMemory": "换绑 Memory",
   "detachMemory": "解绑 Memory",

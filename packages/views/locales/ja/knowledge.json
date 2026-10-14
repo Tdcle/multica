@@ -39,6 +39,7 @@
   "memoryBound": "エージェントに接続済み",
   "memoryUnbound": "接続可能",
   "createMemory": "メモリを作成",
+  "noAvailableMemories": "利用可能なメモリがありません",
   "bindMemory": "メモリを接続",
   "changeMemory": "メモリを変更",
   "detachMemory": "メモリを解除",

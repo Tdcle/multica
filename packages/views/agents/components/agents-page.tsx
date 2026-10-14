@@ -785,6 +785,10 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const memories = useQuery(memoryListOptions(wsId));
+  const availableMemories = useMemo(
+    () => (memories.data ?? []).filter(memory => !memory.agentId && memory.status !== "deleting"),
+    [memories.data],
+  );
   const memoryByAgent = useMemo(
     () => new Map((memories.data ?? []).filter(memory => memory.agentId).map(memory => [memory.agentId, memory])),
     [memories.data],
@@ -1157,6 +1161,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                           agentId={row.agent.id}
                           agentName={row.agent.name}
                           memory={memoryByAgent.get(row.agent.id)}
+                          availableMemories={availableMemories}
                           canManage={row.canManage && !row.agent.archived_at && !row.agent.system_key}
                           loading={memories.isPending}
                           failed={memories.isError}

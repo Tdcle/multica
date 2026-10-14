@@ -148,9 +148,11 @@ export function MemoryManager({
       ))}
       {agentId && canManage ? (
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => setBindingOpen(true)}>
-            {binding ? t(($) => $.changeMemory) : t(($) => $.bindMemory)}
-          </Button>
+          {!binding ? (
+            <Button variant="outline" onClick={() => setBindingOpen(true)}>
+              {t(($) => $.bindMemory)}
+            </Button>
+          ) : null}
           {binding ? (
             <Button variant="outline" onClick={() => setDetachOpen(true)}>
               {t(($) => $.detachMemory)}

@@ -259,42 +259,37 @@ test.describe("connected knowledge services", () => {
     const uiErrors: string[] = [];
     page.on("pageerror", (e) => uiErrors.push(e.message));
     try {
+      await expect
+        .poll(async () => {
+          const response = await call(
+            api, workspace.id, `/api/agents/${agent.id}/memory`,
+          );
+          return (await response.json()).binding?.status;
+        }, { timeout: 45000 })
+        .toBe("ready");
       await page.goto(`/${workspace.slug}/agents`);
       await expect(
         page.getByRole("columnheader", { name: "Memory", exact: true }),
       ).toBeVisible();
-      await page
-        .getByRole("button", { name: "Column agent Memory", exact: true })
-        .click();
-      const manager = page.getByRole("dialog", {
-        name: "Column agent · Memory",
-        exact: true,
+      const cell = page.getByRole("button", {
+        name: "Column agent Memory", exact: true,
       });
-      await expect(manager.getByText("Ready", { exact: true })).toBeVisible({
-        timeout: 45000,
-      });
-      await manager
-        .getByRole("button", { name: "Detach memory", exact: true })
-        .click();
-      await page
-        .getByRole("dialog", { name: "Detach memory", exact: true })
-        .getByRole("button", { name: "Detach memory", exact: true })
-        .click();
-      await expect(
-        manager.getByText(
-          "No memory is bound. Extraction and recall are paused.",
-        ),
-      ).toBeVisible();
-      await manager
-        .getByRole("button", { name: "Bind memory", exact: true })
-        .click();
-      await page
-        .getByRole("dialog", { name: "Bind memory", exact: true })
-        .getByRole("button", { name: /Column agent/ })
-        .click();
-      await expect(manager.getByText("Ready", { exact: true })).toBeVisible();
-      await page.keyboard.press("Escape");
-      await expect(manager).not.toBeVisible();
+      await expect(cell).toHaveText("Column agent");
+      await cell.click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(page.getByRole("menuitem")).toHaveCount(1);
+      await page.getByRole("menuitem", { name: "Detach memory", exact: true }).click();
+      await expect(cell).toHaveText("Bind memory");
+      const detached = await call(api, workspace.id, "/api/memories");
+      const memories = await detached.json();
+      expect(memories.find((memory: { name: string }) => memory.name === "Column agent"))
+        .toMatchObject({ agent_id: null });
+      await cell.click();
+      await page.getByRole("menuitem", { name: "Bind memory", exact: true }).hover();
+      await page.getByRole("menuitem", { name: "Column agent", exact: true }).click();
+      await expect(cell).toHaveText("Column agent");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(page).toHaveURL(new RegExp(`/${workspace.slug}/agents$`));
       await page.getByRole("button", { name: "Memory", exact: true }).click();
       const library = page.getByRole("dialog", { name: "Memory", exact: true });
       await library
