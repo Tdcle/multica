@@ -56,6 +56,13 @@ engines. Web and Desktop share the Memory console and agent memory controls.
   per-turn prompt. Explicit native fixed-asset bindings select additional assets.
   Human reads retain the original catalog and native ACLs. On-demand CLI reads
   support native layers, Wiki references and code exploration.
+- The embedded console uses Multica's shared design tokens, Inter and Geist Mono
+  fonts, Lucide icons and compact secondary navigation. Controls, menus, dialogs,
+  tables, resource cards, Markdown and graph canvases follow the same surface and
+  typography system. Light/dark appearance and language follow the host through
+  a source-checked message bridge; no credentials or parent DOM access are shared.
+  Preparation generates the panel token stylesheet from `packages/ui/styles/tokens.css`;
+  the managed build refreshes it automatically.
 - The panel uses the caller's mapped native identity in an isolated frame.
   Only the non-sensitive onboarding completion preference is persisted by the
   host per user and workspace; session credentials remain in frame memory.
