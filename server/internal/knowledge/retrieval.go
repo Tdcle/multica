@@ -147,8 +147,13 @@ func (s *Service) Read(ctx context.Context, binding db.WorkspaceKnowledge, ident
 	switch asset.Type {
 	case "skill":
 		input = map[string]any{"team_id": binding.TeamID, "skill_id": id, "include_content": true, "include_manifest": true}
+		path := "/v3/skill/get"
+		if ref != "" {
+			path = "/v3/skill/files/read"
+			input = map[string]any{"team_id": binding.TeamID, "skill_id": id, "path": ref}
+		}
 		var result json.RawMessage
-		err = s.Client.Call(ctx, binding.InstanceID, "/v3/skill/get", reader.Key, input, &result)
+		err = s.Client.Call(ctx, binding.InstanceID, path, reader.Key, input, &result)
 		return result, err
 	case "llm_wiki":
 		input["wiki_id"] = id

@@ -4,7 +4,6 @@ import type { RouteObject } from "react-router-dom";
 import { IssueDetailPage } from "./pages/issue-detail-page";
 import { ProjectDetailPage } from "./pages/project-detail-page";
 import { AutopilotDetailPage } from "./pages/autopilot-detail-page";
-import { SkillDetailPage } from "./pages/skill-detail-page";
 import { AgentDetailPage } from "./pages/agent-detail-page";
 import { AiBuilderSessionPage } from "./pages/ai-builder-session-page";
 import { MemberDetailPage } from "./pages/member-detail-page";
@@ -18,8 +17,7 @@ import { ProjectsPage } from "@multica/views/projects/components";
 import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
-import { KnowledgePage } from "@multica/views/knowledge";
-import { SkillsPage } from "@multica/views/skills";
+import { KnowledgePage, SkillsRedirect } from "@multica/views/knowledge";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
 import { DesktopAgentsPage } from "./components/desktop-agents-page";
 import {
@@ -179,10 +177,10 @@ export const appRoutes: RouteObject[] = [
             handle: { title: "Runtime" },
           },
           { path: "knowledge", element: <KnowledgePage />, handle: { title: "Memory" } },
-          { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
+          { path: "skills", element: <SkillsRedirect />, handle: { title: "Skills" } },
           {
             path: "skills/:id",
-            element: <SkillDetailPage />,
+            element: <SkillsRedirect />,
             handle: { title: "Skill" },
           },
           { path: "agents", element: <DesktopAgentsPage />, handle: { title: "Agents" } },

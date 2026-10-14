@@ -89,7 +89,7 @@ func init() {
 		cmd.Flags().Int("limit", 100, "Page size (1 to 100)")
 		cmd.Flags().Int("offset", 0, "Page offset")
 	}
-	knowledgeReadCmd.Flags().String("ref", "", "Wiki page reference; omit to list pages")
+	knowledgeReadCmd.Flags().String("ref", "", "Wiki page reference or Skill resource path")
 	knowledgeReadCmd.Flags().String("query", "", "Code symbol or topic to explore; omit to read graph status")
 	knowledgeReadCmd.Flags().String("layer", "", "Chat Memory layer: L0, L1, L2 or L3 (default: L1)")
 	knowledgeCmd.AddCommand(knowledgeSearchCmd, knowledgeListCmd, knowledgeReadCmd)

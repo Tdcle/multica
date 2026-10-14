@@ -156,3 +156,11 @@ Behavior is path-shape-dependent. On **import or create** a manifest's `SKILL.md
 supporting file is dropped (it will not appear in the returned `files`), so the
 import still succeeds — it does not 400. The hard 400 rejection fires only on the
 dedicated single-file endpoint `PUT /api/skills/{id}/files`.
+
+## Managed Memory Skills
+
+- `packages/views/knowledge/knowledge-page.tsx` and `skills-redirect.tsx`: the single Memory console and Skills redirects.
+- `services/agent-memory/patches/013-team-skills.patch`: team imports, reference bindings, scoped ownership and unbinding.
+- `server/internal/knowledge/retrieval.go`: bound asset authorization and native Skill body/resource reads.
+- `scripts/migrate-agent-memory-skills.mjs`: backed-up team migration with full content verification.
+- `e2e/memory-skills.spec.ts`: migration, shared references, task hydration, file reads and permission revocation.

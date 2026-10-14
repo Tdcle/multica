@@ -9,9 +9,12 @@ import {
   knowledgePanelOptions,
 } from "@multica/core/knowledge";
 import { useT } from "../i18n";
+import { useNavigation } from "../navigation";
 
 export function KnowledgePage() {
   const wsId = useWorkspaceId();
+  const { searchParams } = useNavigation();
+  const section = searchParams.get("section") === "skills" ? "skills" : "memory";
   const userId = useAuthStore((state) => state.user?.id);
   const frame = useRef<HTMLIFrameElement>(null);
   useEffect(() => {
@@ -95,7 +98,7 @@ export function KnowledgePage() {
         <iframe
           key={panel.data.url}
           ref={frame}
-          src={panel.data.url}
+          src={`${panel.data.url}&view=${section}`}
           title={t(($) => $.title)}
           className="min-h-0 w-full flex-1 border-0"
           referrerPolicy="no-referrer"

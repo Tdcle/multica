@@ -562,9 +562,10 @@ func (h *Handler) scopeKnowledgePanelRequest(r *http.Request, caller knowledgePa
 
 const knowledgePanelBootstrapJS = `
 const prefix = new URL('.', import.meta.url).pathname;
-let ticket = new URLSearchParams(location.hash.slice(1)).get('session');
+const entry = new URLSearchParams(location.hash.slice(1));
+let ticket = entry.get('session');
 if (!ticket) throw new Error('Knowledge panel session is required');
-history.replaceState(null, '', prefix + '#/memory');
+history.replaceState(null, '', prefix + (entry.get('view') === 'skills' ? '#/skills' : '#/memory'));
 const memory = new Map();
 let onboardedKey;
 const notifyOnboarding = key => {

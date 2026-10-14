@@ -99,11 +99,13 @@ const PAGE_KEYWORDS: Record<WorkspacePageKey, string[]> = {
   usage: ["usage", "analytics", "stats", "metrics", "统计", "分析", "用量"],
   runtimes: ["runtimes", "environments", "machines", "运行时"],
   skills: ["skills", "library", "技能"],
-  knowledge: ["knowledge", "memory", "wiki", "知识库", "记忆"],
+  knowledge: ["knowledge", "memory", "wiki", "skills", "skill", "library", "知识库", "记忆", "技能"],
   settings: ["settings", "config", "preferences", "设置", "配置"],
 };
 
-const NAV_PAGE_KEYS = Object.keys(WORKSPACE_PAGES) as WorkspacePageKey[];
+const NAV_PAGE_KEYS = (Object.keys(WORKSPACE_PAGES) as WorkspacePageKey[]).filter(
+  (key) => key !== "skills",
+);
 
 // No `icon` field: like the sidebar nav, a page's icon is derived from its
 // destination path via routeIconForPath, so all navigation surfaces show the

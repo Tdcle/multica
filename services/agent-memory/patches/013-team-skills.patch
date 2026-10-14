@@ -1,0 +1,585 @@
+diff --git a/MemoryCore/src/core/skill/skill-core.ts b/MemoryCore/src/core/skill/skill-core.ts
+index c35e76c..35a2885 100644
+--- a/MemoryCore/src/core/skill/skill-core.ts
++++ b/MemoryCore/src/core/skill/skill-core.ts
+@@ -296,7 +296,7 @@ export class SkillCore {
+     try {
+       return await this.versioning.createNewSkill(
+         sid,
+-        input.agent_id ?? "default",
++        input.agent_id ?? (input.team_id ? "" : "default"),
+         { user_id: input.user_id, team_id: input.team_id, agent_id: input.agent_id, task_id: input.task_id },
+         {
+           content: input.content,
+diff --git a/MemoryCore/src/gateway/server.ts b/MemoryCore/src/gateway/server.ts
+index eca57bd..1e3ae46 100644
+--- a/MemoryCore/src/gateway/server.ts
++++ b/MemoryCore/src/gateway/server.ts
+@@ -414,20 +414,21 @@ export class TdaiGateway {
+         // v1 首创前置 await：抛异常 = create 失败（避免「skill 已落库但 asset
+         // 缺失」的静默不一致）。standalone 模式下唯一的登记入口除了 handler 层的
+         // handleCreate 兜底之外就是这里 —— 无论谁调 SkillCore.create 都能触发。
+-        onSkillCreated: async ({ skill_id, team_id, agent_id, name }) => {
+-          if (!team_id || !agent_id) return; // 无租户上下文 → 跳过（OpenClaw local scope 等）
++        onSkillCreated: async ({ skill_id, team_id, agent_id, user_id, name }) => {
++          if (!team_id || (!agent_id && !user_id)) return; // 无租户上下文 → 跳过（OpenClaw local scope 等）
+           const metaSvc = await gatewayRef.ensureMetadataService(skillAssetInstanceId);
+-          await metaSvc.ensureSkillAsset({ skill_id, team_id, agent_id, name });
++          await metaSvc.ensureSkillAsset({ skill_id, team_id, agent_id, user_id, name });
+         },
+         // 读时自愈：fire-and-forget，异常吞掉。补历史 / 迁移 / 误删产生的孤儿 skill。
+         onSkillAccessed: (skill) => {
+-          if (!skill.team_id || !skill.owner_agent_id) return;
++          if (!skill.team_id || (!skill.owner_agent_id && !skill.user_id)) return;
+           gatewayRef
+             .ensureMetadataService(skillAssetInstanceId)
+             .then((svc) => svc.ensureSkillAsset({
+               skill_id: skill.skill_id,
+               team_id: skill.team_id!,
+-              agent_id: skill.owner_agent_id!,
++              agent_id: skill.owner_agent_id || undefined,
++              user_id: skill.user_id,
+               name: skill.name,
+             }))
+             .catch((err: unknown) => {
+@@ -1110,6 +1111,17 @@ export class TdaiGateway {
+       // their existing service-credential contract.
+       const callerKey = typeof req.headers["x-tdai-user-key"] === "string" ? req.headers["x-tdai-user-key"] : undefined;
+       if (callerKey) {
++        skillDeps.canCreateSkill = async (instanceId, input) => {
++          const metadata = await this.ensureMetadataService(instanceId);
++          const user = await metadata.verifyAuth(callerKey);
++          if (!user || !input.team_id || input.user_id !== user.user_id) return false;
++          const member = await metadata.getTeamMember(input.team_id, user.user_id);
++          if (!member) return false;
++          if (!input.agent_id) return true;
++          const agent = await metadata.getAgentById(input.agent_id);
++          return !!agent && agent.team_id === input.team_id &&
++            (agent.owner_user_id === user.user_id || member.role === "admin");
++        };
+         const cache = new Map<string, boolean>();
+         skillDeps.canAccessSkill = async (instanceId, skillId, action) => {
+           const key = `${instanceId}:${skillId}:${action}`;
+@@ -2158,10 +2170,10 @@ export class TdaiGateway {
+       onSkillVdbChanged: (delta: number) => {
+         quotaMgr?.reportUsage(instanceId, delta, 0, "Skill").catch(() => {});
+       },
+-      onSkillCreated: async ({ skill_id, team_id, agent_id, name }) => {
+-        if (!team_id || !agent_id) return;
++      onSkillCreated: async ({ skill_id, team_id, agent_id, user_id, name }) => {
++        if (!team_id || (!agent_id && !user_id)) return;
+         const metaSvc = await resolveMetaSvc();
+-        await metaSvc.ensureSkillAsset({ skill_id, team_id, agent_id, name });
++        await metaSvc.ensureSkillAsset({ skill_id, team_id, agent_id, user_id, name });
+       },
+     });
+ 
+@@ -2176,12 +2188,13 @@ export class TdaiGateway {
+       versionTtlSeconds: skillCfg?.versionTtlSeconds ?? 0,
+       maxNonHeadVersions: skillCfg?.maxNonHeadVersions ?? 0,
+       onSkillAccessed: (skill) => {
+-        if (!skill.team_id || !skill.owner_agent_id) return;
++        if (!skill.team_id || (!skill.owner_agent_id && !skill.user_id)) return;
+         resolveMetaSvc()
+           .then((svc) => svc.ensureSkillAsset({
+             skill_id: skill.skill_id,
+             team_id: skill.team_id,
+-            agent_id: skill.owner_agent_id,
++            agent_id: skill.owner_agent_id || undefined,
++            user_id: skill.user_id,
+             name: skill.name,
+           }))
+           .catch((err: unknown) => {
+diff --git a/MemoryCore/src/gateway/skill-handlers.ts b/MemoryCore/src/gateway/skill-handlers.ts
+index 2a2a59c..98f4ddd 100644
+--- a/MemoryCore/src/gateway/skill-handlers.ts
++++ b/MemoryCore/src/gateway/skill-handlers.ts
+@@ -71,6 +71,7 @@ const TAG = "[skill-handlers]";
+ 
+ export interface SkillRouterDeps {
+   getSkillCore: () => SkillCore | undefined;
++  canCreateSkill?: (instanceId: string, input: {team_id?: string; user_id?: string; agent_id?: string}) => Promise<boolean>;
+   canAccessSkill?: (instanceId: string, skillId: string, action: "read" | "write") => Promise<boolean>;
+   /** Optional. 抽取器实例（供 worker 内部驱动）。 */
+   getSkillExtractor?: () => SkillExtractor | undefined;
+@@ -295,6 +296,10 @@ export async function handleCreate(body: unknown, auth: V2AuthContext, requestId
+   const pre = await precheckWrite(createRequestSchema, body, auth, deps, requestId);
+   if (!pre.ok) { obsLogger.warn("skill.handleCreate.done", { req_id: requestId, code: pre.envelope.code, dur_ms: Date.now() - t0, reason: "precheck" }); return pre.envelope; }
+ 
++  if (deps.canCreateSkill && !await deps.canCreateSkill(auth.serviceId, pre.data)) {
++    return errorEnvelope(403, "Skill creation requires membership and the current identity", requestId);
++  }
++
+   // Quota check (like memory's checkMemoryQuota)
+   if (deps.quotaManager) {
+     const check = await deps.quotaManager.checkMemoryQuota(auth.serviceId, 1);
+@@ -306,7 +311,8 @@ export async function handleCreate(body: unknown, auth: V2AuthContext, requestId
+ 
+   try {
+     const r = await pre.core.create(pre.data);
+-    try { trace.report("skill.create", { skill_id: r.skill_id, team_id: r.team_id, agent_id: r.owner_agent_id, name: r.name }); } catch { /* noop */ }
++    try { trace.report("skill.create", { skill_id: r.skill_id, team_id: r.team_id, agent_id: r.owner_agent_id || undefined,
++          user_id: r.user_id, name: r.name }); } catch { /* noop */ }
+ 
+     // ── 自动登记 skill 资产（asset_id === skill_id）+ 绑定到 owner agent 的 fixed-asset ──
+     //
+@@ -324,13 +330,14 @@ export async function handleCreate(body: unknown, auth: V2AuthContext, requestId
+     //   - 抛出异常 → create 请求整体返回错误。避免出现"skill 落库但 asset 缺失"
+     //     的静默不一致状态（用户会疑惑"我创建成功了但看不到"）。
+     //   - 与 v2-router.ts handleConversationAdd 里 ensureChatMemoryAsset 的做法一致。
+-    if (deps.getMetadataService && r.team_id && r.owner_agent_id) {
++    if (deps.getMetadataService && r.team_id && (r.owner_agent_id || r.user_id)) {
+       try {
+         const metaSvc = await deps.getMetadataService(auth.serviceId);
+         await metaSvc.ensureSkillAsset({
+           skill_id: r.skill_id,
+           team_id: r.team_id,
+-          agent_id: r.owner_agent_id,
++          agent_id: r.owner_agent_id || undefined,
++          user_id: r.user_id,
+           name: r.name,
+         });
+       } catch (err) {
+@@ -363,7 +370,8 @@ export async function handleUpdate(body: unknown, auth: V2AuthContext, requestId
+ 
+   try {
+     const r = await pre.core.update(pre.data);
+-    try { trace.report("skill.update", { skill_id: r.skill_id, team_id: r.team_id, agent_id: r.owner_agent_id, name: r.name, version: r.version }); } catch { /* noop */ }
++    try { trace.report("skill.update", { skill_id: r.skill_id, team_id: r.team_id, agent_id: r.owner_agent_id || undefined,
++          user_id: r.user_id, name: r.name, version: r.version }); } catch { /* noop */ }
+     obsLogger.info("skill.handleUpdate.done", { req_id: requestId, code: 0, dur_ms: Date.now() - t0, skill_id: r.skill_id, name: r.name, version: r.version });
+     return successEnvelope(toSummary(r), requestId);
+   } catch (e) {
+@@ -387,7 +395,8 @@ export async function handlePatch(body: unknown, auth: V2AuthContext, requestId:
+ 
+   try {
+     const r = await pre.core.patch(pre.data);
+-    try { trace.report("skill.patch", { skill_id: r.skill_id, team_id: r.team_id, agent_id: r.owner_agent_id, name: r.name, version: r.version }); } catch { /* noop */ }
++    try { trace.report("skill.patch", { skill_id: r.skill_id, team_id: r.team_id, agent_id: r.owner_agent_id || undefined,
++          user_id: r.user_id, name: r.name, version: r.version }); } catch { /* noop */ }
+     obsLogger.info("skill.handlePatch.done", { req_id: requestId, code: 0, dur_ms: Date.now() - t0, skill_id: r.skill_id, name: r.name, version: r.version });
+     return successEnvelope(toSummary(r), requestId);
+   } catch (e) {
+diff --git a/MemoryCore/src/metadata/router/v3-meta-router.ts b/MemoryCore/src/metadata/router/v3-meta-router.ts
+index c4f6334..8f6f4da 100644
+--- a/MemoryCore/src/metadata/router/v3-meta-router.ts
++++ b/MemoryCore/src/metadata/router/v3-meta-router.ts
+@@ -305,10 +305,14 @@ const routeTable: Record<string, Handler> = {
+     await s.setAgentFixedAssetsForCaller(d.agent_id, d.bindings, c);
+     return OK;
+   }),
+-  [`${V3_PREFIX}/agent-fixed-asset/list`]: bind(S.fixedAssetListSchema, (d, _c, s) =>
+-    s.listAgentFixedAssets(d.agent_id, resolvePagination(d)),
+-  ),
+-  [`${V3_PREFIX}/agent-fixed-asset/list-with-detail`]: bind(S.fixedAssetListWithDetailSchema, (d, _c, s) => s.listAgentFixedAssetsWithDetail(d)),
++  [`${V3_PREFIX}/agent-fixed-asset/list`]: bind(S.fixedAssetListSchema, async (d, c, s) => {
++    await s.assertAgentAssetsForCaller(d.agent_id, c);
++    return s.listAgentFixedAssets(d.agent_id, resolvePagination(d));
++  }),
++  [`${V3_PREFIX}/agent-fixed-asset/list-with-detail`]: bind(S.fixedAssetListWithDetailSchema, async (d, c, s) => {
++    await s.assertAgentAssetsForCaller(d.agent_id, c);
++    return s.listAgentFixedAssetsWithDetail(d);
++  }),
+   [`${V3_PREFIX}/agent-fixed-asset/summary-by-agents`]: bind(S.fixedAssetSummaryByAgentsSchema, (d, _c, s) =>
+     s.summarizeAgentFixedAssetsByAgents({ agent_ids: d.agent_ids, asset_id: d.asset_id }),
+   ),
+diff --git a/MemoryCore/src/metadata/service/metadata-service.ts b/MemoryCore/src/metadata/service/metadata-service.ts
+index 48cdf6b..7214a14 100644
+--- a/MemoryCore/src/metadata/service/metadata-service.ts
++++ b/MemoryCore/src/metadata/service/metadata-service.ts
+@@ -1516,7 +1516,8 @@ export class MetadataService {
+   async ensureSkillAsset(params: {
+     skill_id: string;
+     team_id: string;
+-    agent_id: string;
++    agent_id?: string;
++    user_id?: string;
+     name: string;
+   }): Promise<AssetEntity> {
+     const assetId = params.skill_id; // skill_id === asset_id（约定）
+@@ -1528,6 +1529,19 @@ export class MetadataService {
+       this.ensuredSkillAssets.delete(assetId);
+     }
+ 
++    if (!params.agent_id) {
++      if (!params.user_id || !await this.getTeamMember(params.team_id, params.user_id)) {
++        throw new MetadataError("permission_denied", "team membership is required to create a team skill");
++      }
++      const existing = await this.getAssetById(assetId);
++      if (existing) return existing;
++      return this.createAsset({
++        asset_id: assetId, team_id: params.team_id, asset_type: "skill",
++        name: params.name, owner_user_id: params.user_id,
++        source_type: "manual", visibility: "team", status: "active",
++      });
++    }
++
+     // 2. 拿 agent 取 owner + 校验 team
+     const agent = await this.getAgentById(params.agent_id);
+     if (!agent) {
+@@ -2150,12 +2164,17 @@ export class MetadataService {
+     return ids;
+   }
+ 
++  async assertAgentAssetsForCaller(agentId: string, ctx: V3AuthContext): Promise<void> {
++    const agent = await this.assertCallerIsAgentOwnerOrTeamAdmin(ctx, agentId);
++    await this.requireActiveTeamMember(ctx, agent.team_id);
++  }
++
+   async setAgentFixedAssetsForCaller(
+     agentId: string,
+     bindings: FixedAssetBindingInput[],
+     ctx: V3AuthContext,
+   ): Promise<void> {
+-    await this.assertCallerIsAgentOwnerOrTeamAdmin(ctx, agentId);
++    await this.assertAgentAssetsForCaller(agentId, ctx);
+     return this.setAgentFixedAssets(agentId, bindings);
+   }
+ 
+diff --git a/MemoryPanel/src/panel/api/meta-actions.ts b/MemoryPanel/src/panel/api/meta-actions.ts
+index e1cf0b8..2ec661d 100644
+--- a/MemoryPanel/src/panel/api/meta-actions.ts
++++ b/MemoryPanel/src/panel/api/meta-actions.ts
+@@ -1,8 +1,4 @@
+-/**
+- * 内核 /v3/meta/* 公开 action 列表（v3.2：55 条，不含 internal）。
+- * 注：agent-fixed-asset/* 仍在 META_ACTIONS 登记但公开 proxy 501 NOT_IN_SCOPE；
+- * Control 业务路由可通过 metaKernel.invoke 直调。
+- */
++/** Public metadata actions; binding mutations retain Core owner/admin checks. */
+ 
+ export const META_LIST_ACTIONS = new Set([
+   'user/list',
+@@ -89,17 +85,12 @@ export const META_ACTIONS = [
+ 
+ export type MetaAction = (typeof META_ACTIONS)[number];
+ 
+-/**
+- * 暂未开放给面板的 action 前缀。
+- *
+- * asset/* 已放开：skill「分配到 Agent」走授权接口（acl/grant）时，需先把 skill
+- * 登记为 meta 资产（asset/create，owner=当前登录用户），再授予目标 agent use 权限。
+- * agent-fixed-asset/*（运行时固定注入绑定）仍暂不开放。
+- */
++// Expose only the fixed-asset operations used by the console.
++const EXPOSED_FIXED_ASSET_ACTIONS = new Set(['agent-fixed-asset/set', 'agent-fixed-asset/list', 'agent-fixed-asset/list-with-detail']);
+ const NOT_IN_SCOPE_PREFIXES = ['agent-fixed-asset/'] as const;
+ 
+ export function isNotInScopeAction(action: string): boolean {
+-  return NOT_IN_SCOPE_PREFIXES.some((prefix) => action.startsWith(prefix));
++  return !EXPOSED_FIXED_ASSET_ACTIONS.has(action) && NOT_IN_SCOPE_PREFIXES.some((prefix) => action.startsWith(prefix));
+ }
+ 
+ export const ALLOWED_PANEL_ACTIONS = new Set(
+diff --git a/MemoryPanel/web/src/lib/api/skill-api.ts b/MemoryPanel/web/src/lib/api/skill-api.ts
+index 4c05cc7..500adb7 100644
+--- a/MemoryPanel/web/src/lib/api/skill-api.ts
++++ b/MemoryPanel/web/src/lib/api/skill-api.ts
+@@ -141,7 +141,7 @@ async function skillCall<T>(action: string, body: Record<string, unknown>, signa
+ export function createSkill(params: {
+   user_id: string;
+   team_id: string;
+-  agent_id: string;
++  agent_id?: string;
+   task_id?: string;
+   name: string;
+   content: string;
+@@ -156,7 +156,7 @@ export function createSkill(params: {
+ export function updateSkill(params: {
+   user_id: string;
+   team_id: string;
+-  agent_id: string;
++  agent_id?: string;
+   skill_id: string;
+   expected_version: number;
+   content: string;
+@@ -169,7 +169,7 @@ export function updateSkill(params: {
+ export function patchSkill(params: {
+   user_id: string;
+   team_id: string;
+-  agent_id: string;
++  agent_id?: string;
+   skill_id: string;
+   expected_version: number;
+   old_string: string;
+@@ -184,7 +184,7 @@ export function patchSkill(params: {
+ export function deleteSkillV3(params: {
+   user_id: string;
+   team_id: string;
+-  agent_id: string;
++  agent_id?: string;
+   skill_id: string;
+ }): Promise<{ skill_id: string; archived: boolean }> {
+   return skillCall('delete', params as unknown as Record<string, unknown>);
+@@ -289,7 +289,7 @@ export function listSkillVersions(params: {
+ export function writeSkillFiles(params: {
+   user_id: string;
+   team_id: string;
+-  agent_id: string;
++  agent_id?: string;
+   skill_id: string;
+   expected_version: number;
+   files: SkillResourcePayload[];
+@@ -302,7 +302,7 @@ export function writeSkillFiles(params: {
+ export function removeSkillFiles(params: {
+   user_id: string;
+   team_id: string;
+-  agent_id: string;
++  agent_id?: string;
+   skill_id: string;
+   expected_version: number;
+   paths: string[];
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/components/ImportSkillDialog.tsx b/MemoryPanel/web/src/pages/SkillsPage/components/ImportSkillDialog.tsx
+index a8ba1c5..8ef5eb8 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/components/ImportSkillDialog.tsx
++++ b/MemoryPanel/web/src/pages/SkillsPage/components/ImportSkillDialog.tsx
+@@ -168,6 +168,7 @@ export default function ImportSkillDialog(props: {
+ 
+       // ==== 对话导入：直接调 skill/extract ====
+       if (mode === 'session') {
++        if (!agentId) throw new Error(t('importSkill.error.noAgent'));
+         const raw = sessionPayload.trim();
+         if (!raw) throw new Error(t('importSkill.error.noPayload'));
+         let parsed: Record<string, unknown>;
+@@ -287,7 +288,7 @@ export default function ImportSkillDialog(props: {
+       await createSkill({
+         user_id: props.userId,
+         team_id: props.teamId,
+-        agent_id: agentId || props.userId, // v3 要求 agent_id，固定模式用选中的，否则用 userId 兜底
++        agent_id: agentId || undefined,
+         name,
+         content: safeContent,
+         resources: resources.length ? resources : undefined,
+@@ -342,7 +343,7 @@ export default function ImportSkillDialog(props: {
+         onChange={(v) => setMode(v as Mode)}
+         options={[
+           { value: 'directory', text: t('importSkill.mode.directory') },
+-          { value: 'session', text: t('importSkill.mode.session') },
++          ...(props.target === 'fixed' ? [{ value: 'session', text: t('importSkill.mode.session') }] : []),
+         ]}
+       />
+ 
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/components/SkillDetailPane.tsx b/MemoryPanel/web/src/pages/SkillsPage/components/SkillDetailPane.tsx
+index f8a05ba..b5b525d 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/components/SkillDetailPane.tsx
++++ b/MemoryPanel/web/src/pages/SkillsPage/components/SkillDetailPane.tsx
+@@ -153,8 +153,8 @@ export default function SkillDetailPane(props: {
+   if (props.skillId && props.skillName) {
+     stickyRef.current = { id: props.skillId, name: props.skillName };
+   }
+-  const skillId = props.skillId ?? stickyRef.current?.id ?? '';
+-  const skillName = props.skillName ?? stickyRef.current?.name ?? null;
++  const skillId = props.skillId ?? '';
++  const skillName = props.skillName ?? (stickyRef.current?.id === skillId ? stickyRef.current.name : null);
+   const canEdit = !!props.canEdit;
+ 
+   const loadDetail = useCallback(() => {
+@@ -200,8 +200,8 @@ export default function SkillDetailPane(props: {
+     if (!currentView) return null;
+     const teamId = props.teamId || currentView.team_id;
+     const agentId = currentView.owner_agent_id;
+-    if (!teamId || !agentId || !props.userId) return null;
+-    return { user_id: props.userId, team_id: teamId, agent_id: agentId };
++    if (!teamId || !props.userId) return null;
++    return { user_id: props.userId, team_id: teamId, agent_id: agentId || undefined };
+   }, [currentView, props.teamId, props.userId]);
+ 
+   const editable = canEdit && !!writeCtx;
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx b/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx
+index 884f653..9407043 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx
++++ b/MemoryPanel/web/src/pages/SkillsPage/components/SkillsPanel.tsx
+@@ -1,30 +1,7 @@
+-/**
+- * SkillsPanel — single tab in the App-level top-nav. Shows the team's
+- * skill library across two lenses and offers three write actions:
+- * import / allocate / fork.
+- *
+- * Tab 语义：
+- *   - team   ＝ 当前 team 内所有 agent 的固定资产并集（按 name 去重）；
+- *              用户视角是"团队拥有的所有 skill"，数据上去掉了独立的「浮动池」概念。
+- *   - fixed  ＝ 单个 agent 的固定资产（按 agent_id 隔离）。
+- *
+- * 写操作：
+- *   - 导入  → 仅在 fixed tab 下可用，落到当前选中的 agent。
+- *   - 分配  → team tab 下选中一条 skill 后可用。后端走 team_to_agent 引用，
+- *            被分配的 agent 拿到的是「只读」副本（共享 SKILL.md，编辑会动到团队版）。
+- *   - Fork → team tab 下选中一条 skill 后可用。前端拼装 `fetchSkillFull → importSkill`，
+- *            以 `<原名>-fork-<agentId>` 落新副本，agent 拿到的是独立可写副本。
+- *
+- * 权限模型：
+- *   - admin 用户：全部可见 + 全部可操作
+- *   - skill owner：可编辑自己的 skill；可选择是否让其他人可见
+- *   - 其他人：只能看到 owner 设为可见的 skill（可见 = 可复制 + 只读使用）
+- *
+- * Refresh strategy: poll on tab change + after every write action. No
+- * setInterval — skill mutations are user-driven, the auto-refresh cost
+- * is not worth it.
+- *
+- */
++/** One team library with optional agent bindings and agent-owned extracted skills. */
++import { useState } from 'react';
++import AllocateAssetDialog from '@/components/asset/AllocateAssetDialog';
++import { agentsApi } from '@/lib/teamApi';
+ import { useTranslation } from 'react-i18next';
+ import { Button, Select, Segment, Tag, Tooltip } from 'tea-component';
+ import { DeleteIcon } from '@/components/multica-icons';
+@@ -55,6 +32,7 @@ export default function SkillsPanel({
+ }) {
+   const { t } = useTranslation();
+   const store = useSkillsPanel();
++  const [allocating, setAllocating] = useState(false);
+ 
+   const {
+     // context
+@@ -130,6 +108,11 @@ export default function SkillsPanel({
+         }
+         actions={
+           <>
++            {tab === 'team' && (
++              <Button onClick={() => setAllocating(true)} disabled={!selectedSkillId || teamAgents.length === 0}>
++                {t('allocAsset.submit')}
++              </Button>
++            )}
+             {(() => {
+               const canFork = tab === 'team' && !!selectedSkillId;
+               const tooltip =
+@@ -161,8 +144,7 @@ export default function SkillsPanel({
+             <Button
+               type="primary"
+               onClick={() => setShowImport(true)}
+-              disabled={teamAgents.length === 0}
+-              tooltip={teamAgents.length === 0 ? t('skills.import.tooltip.noAgent') : undefined}
++              disabled={tab === 'fixed' && teamAgents.length === 0}
+               data-guide="import-skill"
+             >
+               {t('skills.import')}
+@@ -220,7 +202,18 @@ export default function SkillsPanel({
+                       </Tooltip>
+                     )}
+                     <AssetItemName title={s.name}>{s.name}</AssetItemName>
+-                    {canManage && (
++                    {tab === 'fixed' && s.owner_agent_id !== selectedAgent && (
++                      <Button type="text" onClick={async (event: any) => {
++                        event?.stopPropagation();
++                        try {
++                          const bindings = await agentsApi.getFixedAssets(selectedAgent);
++                          await agentsApi.setFixedAssets(selectedAgent, bindings.filter(binding => binding.asset_id !== s.skill_id));
++                          setSelectedSkillId(null);
++                          void refresh();
++                        } catch (error) { tea.notify.error(error); }
++                      }}>{t('common.unbind')}</Button>
++                    )}
++                    {canManage && (tab === 'team' || s.owner_agent_id === selectedAgent) && (
+                       <Button
+                         type="text"
+                         tooltip={ownerIsMe ? t('skills.delete.own') : t('skills.delete.admin')}
+@@ -298,13 +291,22 @@ export default function SkillsPanel({
+       />
+ 
+       {/* Modals (only for team/fixed tabs) */}
++      {allocating && selectedSkillId && (
++        <AllocateAssetDialog assetType="skill" assetLabel={selectedSkill?.name || selectedSkillId}
++          agents={teamAgents} team={activeTeam} onClose={() => setAllocating(false)}
++          onAllocate={async agentId => {
++            const bindings = await agentsApi.getFixedAssets(agentId);
++            if (!bindings.some(binding => binding.asset_id === selectedSkillId)) {
++              await agentsApi.setFixedAssets(agentId, [...bindings, {
++                asset_id: selectedSkillId, asset_type: 'skill', injection_mode: 'reference', priority: 50,
++              }]);
++            }
++            void refresh();
++          }} />
++      )}
+       {showImport && (
+-        // 导入弹窗在 team / fixed 两个 tab 都能打开。
+-        // target 始终是 fixed —— 所有 skill 都归属于某个具体 agent。
+-        // agentId 仅在 fixed tab 下作为默认归属带入；team tab 下传 undefined，
+-        // 由弹窗内的「归属 Agent（必选）」下拉自行兜底选第一个。
+         <ImportSkillDialog
+-          target="fixed"
++          target={tab}
+           teamId={activeTeamId ?? ''}
+           userId={myUserId}
+           agents={teamAgents}
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts b/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts
+index 1e80f2d..d64d7b0 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts
++++ b/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts
+@@ -6,7 +6,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+ import { useTranslation } from 'react-i18next';
+ import { assetsApi, agentsApi, type Asset } from '@/lib/teamApi';
+ import {
+-  listSkills,
+   getSkill,
+   deleteSkillV3,
+   exportSkill,
+@@ -26,8 +25,8 @@ export const TAB_I18N_KEY: Record<Tab, string> = {
+ 
+ export function useSkillsPanel() {
+   const { t } = useTranslation();
+-  // 默认展示 Agent 资产（fixed），避免用户误以为自己的资产在「团队资产」里
+-  const [tab, setTab] = useState<Tab>('fixed');
++  // The shared team library is the default entry.
++  const [tab, setTab] = useState<Tab>('team');
+   const { activeTeamId, activeTeam } = useTeams();
+   const myUserId = getPanelSession()?.user?.user_id ?? '';
+   const [selectedAgent, setSelectedAgent] = useState<string>('');
+@@ -192,47 +191,22 @@ export function useSkillsPanel() {
+         setSkills(items);
+         setVisibilityMap(visMap);
+       } else {
+-        // 固定资产 = 指定 agent 拥有（owner）的 skill；这一 tab 侧重"某 agent 装备了什么"，
+-        // 由 owner 权限判定即可，不再叠加 visibility 过滤（agent owner 一定能看到自己的 skill）。
+-        // meta_assets 主表，与 assetsApi.update 写入同源，读写一致。
++        // Agent assets include both owned skills and references to team skills.
+         if (!selectedAgent) {
+           if (seq !== refreshSeqRef.current) return;
+           setSkills([]);
+           setVisibilityMap({});
+         } else {
+-          // visibility 徽章数据源：只拿**当前用户 owner** 的 skill 资产。
+-          //   fixed tab 列表 = selectedAgent 拥有的 skill，而 selectedAgent 只可能
+-          //   是当前用户 owner 的 agent（teamAgents 已按 owner_user_id === myUserId
+-          //   过滤），故这些 skill 的 owner_user_id 必然是 myUserId。
+-          //
+-          // 为什么用 asset/list + owner_user_id 而非 asset/list-accessible：
+-          //   - list-accessible 会遍历**团队全量** skill 资产并逐条跑
+-          //     checkAssetPermission（N+1）；团队合并后资产暴涨 → 明显变慢。
+-          //   - asset/list 走纯 SQL WHERE 直查，无逐条权限检查；配合
+-          //     owner_user_id 把范围收敛到「我 owner 的 skill」，量级与合并前一致。
+-          //   - asset/list 不做 visibility 过滤，返回同时含 team / private，
+-          //     徽章语义完整（owner 本就应看到自己全部可见性的 skill）。
+-          //
+-          // myUserId 缺失（未登录 / session 异常）时**不**降级为无 owner 过滤的
+-          // 全量查询：asset/list 无 ACL，不带 owner_user_id 会把整个 team 的
+-          // skill 元信息拉回响应体（信息暴露 + 慢），得不偿失。此时徽章留空
+-          // （toggle 处对 undefined 已按 private 兜底），列表本身不受影响。
+-          const [listRes, ownedAssets] = await Promise.all([
+-            listSkills({
+-              team_id: activeTeamId,
+-              filters: { owner_agent_id: selectedAgent, status: ['active'] },
+-              pagination: { limit: 200 },
+-            }),
+-            myUserId
+-              ? assetsApi
+-                  .list(activeTeamId, { asset_type: 'skill', owner_user_id: myUserId })
+-                  .catch(() => [] as Asset[])
+-              : Promise.resolve([] as Asset[]),
+-          ]);
+-          if (seq !== refreshSeqRef.current) return; // 已被后续请求取代
++          const assets = (await agentsApi.getAssets(selectedAgent, false))
++            .filter(asset => asset.asset_type === 'skill' && asset.status !== 'archived' && asset.status !== 'deprecated');
++          const items = await Promise.all(assets.map(asset => getSkill({
++            team_id: activeTeamId, skill_id: asset.asset_id,
++            include_content: false, include_manifest: false,
++          })));
++          if (seq !== refreshSeqRef.current) return;
+           const vm: Record<string, Asset['visibility']> = {};
+-          for (const a of ownedAssets) vm[a.asset_id] = a.visibility;
+-          setSkills(listRes.items);
++          for (const asset of assets) vm[asset.asset_id] = asset.visibility as Asset['visibility'];
++          setSkills(items);
+           setVisibilityMap(vm);
+         }
+       }
