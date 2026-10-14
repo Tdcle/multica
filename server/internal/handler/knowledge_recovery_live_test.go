@@ -56,7 +56,7 @@ func TestKnowledgeLiveFailedSkillRetry(t *testing.T) {
 	if instanceID == "" {
 		instanceID = "default"
 	}
-	svc := &knowledge.Service{Client: client, Queries: testHandler.Queries, Box: box, InstanceID: instanceID}
+	svc := &knowledge.Service{Client: client, Queries: testHandler.Queries, Box: box, InstanceID: instanceID, TxStarter: testPool}
 	previous := testHandler.Knowledge
 	testHandler.Knowledge = svc
 	t.Cleanup(func() { testHandler.Knowledge = previous })
@@ -73,7 +73,21 @@ func TestKnowledgeLiveFailedSkillRetry(t *testing.T) {
 		_ = svc.Queries.UnbindWorkspaceKnowledge(context.Background(), binding.WorkspaceID)
 	})
 	go svc.Run(ctx)
-	issueID := dbfx.Issue(t, "Restore an interrupted knowledge delivery", testutil.Cols{"description": "Operator procedure: keep completed memory deliveries; rebuild a missing Skill archive from the frozen completed-task source; retry the same archive and task identity once per authorized request; verify final completion before sharing. Never collect a newer issue snapshot during recovery. Decision marker: recovery-orchard-9465. This describes a procedure, not a claim about an unverified successful operation."})
+	runtimeID := dbfx.Runtime(t, "Recovery memory runtime")
+	agentID := dbfx.Agent(t, "Recovery memory agent", runtimeID)
+	for {
+		memory, e := svc.Queries.GetAgentMemoryBinding(ctx, db.GetAgentMemoryBindingParams{WorkspaceID: binding.WorkspaceID, AgentID: parseUUID(agentID)})
+		if e == nil && memory.AgentMemory.Status == "ready" {
+			binding = knowledge.MemoryBinding(memory.AgentMemory)
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("recovery memory not provisioned")
+		case <-time.After(time.Second):
+		}
+	}
+	issueID := dbfx.Issue(t, "Restore an interrupted knowledge delivery", testutil.Cols{"assignee_type": "agent", "assignee_id": agentID, "description": "Operator procedure: keep completed memory deliveries; rebuild a missing Skill archive from the frozen completed-task source; retry the same archive and task identity once per authorized request; verify final completion before sharing. Never collect a newer issue snapshot during recovery. Decision marker: recovery-orchard-9465. This describes a procedure, not a claim about an unverified successful operation."})
 	if large {
 		for index := 0; index < 501; index++ {
 			dbfx.Comment(t, issueID, fmt.Sprintf("Checkpoint %d: preserve the immutable recovery source; report completion only after its durable receipt.", index))

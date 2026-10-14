@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,6 +20,9 @@ type Service struct {
 	Queries    *db.Queries
 	Box        *secretbox.Box
 	InstanceID string
+	TxStarter  interface {
+		Begin(context.Context) (pgx.Tx, error)
+	}
 }
 
 type Identity struct {
@@ -131,6 +133,26 @@ func (s *Service) Spaces(ctx context.Context, identity Identity) ([]Team, error)
 }
 
 func (s *Service) Bind(ctx context.Context, workspaceID pgtype.UUID, user db.User, teamID, name string) (db.WorkspaceKnowledge, error) {
+	if s.TxStarter != nil {
+		tx, err := s.TxStarter.Begin(ctx)
+		if err != nil {
+			return db.WorkspaceKnowledge{}, err
+		}
+		defer tx.Rollback(ctx)
+		if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,19718))", util.UUIDToString(workspaceID)); err != nil {
+			return db.WorkspaceKnowledge{}, err
+		}
+		if existing, err := s.Queries.GetWorkspaceKnowledge(ctx, workspaceID); err == nil {
+			return existing, nil
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return db.WorkspaceKnowledge{}, err
+		}
+		return s.bindTeam(ctx, workspaceID, user, teamID, name)
+	}
+	return s.bindTeam(ctx, workspaceID, user, teamID, name)
+}
+
+func (s *Service) bindTeam(ctx context.Context, workspaceID pgtype.UUID, user db.User, teamID, name string) (db.WorkspaceKnowledge, error) {
 	identity, err := s.IdentityFor(ctx, user)
 	if err != nil {
 		return db.WorkspaceKnowledge{}, err
@@ -162,54 +184,9 @@ func (s *Service) Bind(ctx context.Context, workspaceID pgtype.UUID, user db.Use
 	if team.ID == "" {
 		return db.WorkspaceKnowledge{}, fmt.Errorf("agent memory returned an empty team identity")
 	}
-	// Discover the existing managed writer before creating one. Retrying a
-	// binding after an ambiguous upstream response preserves the same memory.
-	var agents struct {
-		Items []struct {
-			ID       string `json:"agent_id"`
-			OwnerID  string `json:"owner_user_id"`
-			Metadata string `json:"metadata_json"`
-		} `json:"items"`
-	}
-	err = s.Client.Call(ctx, s.InstanceID, "/v3/meta/agent/list", identity.Key,
-		map[string]any{"team_id": team.ID, "limit": 100}, &agents)
-	if err != nil {
-		return db.WorkspaceKnowledge{}, err
-	}
-	agentID, ownerID := "", identity.ID
-	for _, candidate := range agents.Items {
-		var metadata struct {
-			Purpose string `json:"multica_purpose"`
-		}
-		if json.Unmarshal([]byte(candidate.Metadata), &metadata) == nil && metadata.Purpose == "workspace_memory" {
-			agentID, ownerID = candidate.ID, candidate.OwnerID
-			break
-		}
-	}
-	if agentID == "" {
-		var agent struct {
-			ID string `json:"agent_id"`
-		}
-		err = s.Client.Call(ctx, s.InstanceID, "/v3/meta/agent/create", identity.Key, map[string]any{
-			"team_id": team.ID, "owner_user_id": identity.ID, "name": "Workspace memory",
-			"description":   "Shared experience extracted from completed Multica issues.",
-			"metadata_json": `{"multica_purpose":"workspace_memory"}`, "visibility": "team",
-		}, &agent)
-		if err != nil {
-			return db.WorkspaceKnowledge{}, err
-		}
-		agentID = agent.ID
-	}
-	if agentID == "" || ownerID == "" {
-		return db.WorkspaceKnowledge{}, fmt.Errorf("agent memory returned an invalid writer identity")
-	}
-	if err := s.Client.Call(ctx, s.InstanceID, "/v3/meta/asset/update", identity.Key,
-		map[string]any{"asset_id": "chat_memory-" + team.ID + "-" + agentID, "visibility": "team"}, nil); err != nil {
-		return db.WorkspaceKnowledge{}, err
-	}
 	return s.Queries.BindWorkspaceKnowledge(ctx, db.BindWorkspaceKnowledgeParams{
 		WorkspaceID: workspaceID, InstanceID: s.InstanceID, TeamID: team.ID, Name: team.Name,
-		MemoryAgentID: agentID, MemoryUserID: ownerID, CreatedBy: user.ID,
+		MemoryAgentID: "", MemoryUserID: identity.ID, CreatedBy: user.ID,
 	})
 }
 
@@ -236,11 +213,7 @@ func (s *Service) SearchFor(ctx context.Context, binding db.WorkspaceKnowledge, 
 	if asset.TeamID != binding.TeamID || asset.Status == "archived" {
 		return []Memory{}, nil
 	}
-	if identity == nil {
-		if asset.Visibility != "team" {
-			return []Memory{}, nil
-		}
-	} else {
+	if identity != nil {
 		var permission struct {
 			Allowed bool `json:"allowed"`
 		}

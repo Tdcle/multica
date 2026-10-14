@@ -32,7 +32,42 @@ func (h *Handler) knowledgeReadContext(w http.ResponseWriter, r *http.Request) (
 		return nil, nil, false
 	}
 	if isMachineCredentialActor(r) {
-		return &binding, nil, true
+		actor, agentID := h.resolveActor(r, requestUserID(r), workspaceID)
+		if actor != "agent" {
+			writeError(w, 403, "agent identity required")
+			return nil, nil, false
+		}
+		memory, err := h.Queries.GetAgentMemoryBinding(r.Context(), db.GetAgentMemoryBindingParams{WorkspaceID: binding.WorkspaceID, AgentID: parseUUID(agentID)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, true
+		}
+		if err != nil {
+			h.knowledgeError(w, "read agent memory", err)
+			return nil, nil, false
+		}
+		if memory.AgentMemory.Status != "ready" {
+			return nil, nil, true
+		}
+		scope := knowledge.MemoryBinding(memory.AgentMemory)
+		return &scope, nil, true
+	}
+	if id := r.URL.Query().Get("agent_id"); id != "" {
+		agent, ok := h.loadAgentForUser(w, r, id)
+		if !ok {
+			return nil, nil, false
+		}
+		memory, err := h.Queries.GetAgentMemoryBinding(r.Context(), db.GetAgentMemoryBindingParams{WorkspaceID: binding.WorkspaceID, AgentID: agent.ID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil, true
+		}
+		if err != nil {
+			h.knowledgeError(w, "read agent memory", err)
+			return nil, nil, false
+		}
+		if memory.AgentMemory.Status != "ready" {
+			return nil, nil, true
+		}
+		binding = knowledge.MemoryBinding(memory.AgentMemory)
 	}
 	user, err := h.Queries.GetUser(r.Context(), parseUUID(requestUserID(r)))
 	if err != nil {

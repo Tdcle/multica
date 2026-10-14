@@ -17,6 +17,7 @@ test('original knowledge panel opens with the workspace identity and all knowled
  await page.addInitScript(token=>{if(window.self!==window.top)return;localStorage.setItem('multica_token',token);localStorage.setItem('multica:chat:isOpen','false')},api.getToken()!);
  try {
   await page.goto(`/${workspace.slug}/knowledge`);
+  await page.getByRole('tab',{name:'Native panel',exact:true}).click();
   const frame=page.frameLocator('iframe');
   await expect(frame.locator('._memory-app-shell')).toBeVisible();
   await expect(frame.getByText(/Unexpected Application Error|404 Not Found/)).not.toBeVisible();
@@ -39,7 +40,7 @@ test('original knowledge panel opens with the workspace identity and all knowled
   await frame.locator('body').evaluate(body=>body.setAttribute('data-panel-retained','yes'));
   await page.getByRole('tab',{name:'Extraction history'}).click();
   await expect(page.locator('iframe')).not.toBeVisible();
-  await page.getByRole('tab',{name:'Knowledge space'}).click();
+  await page.getByRole('tab',{name:'Native panel'}).click();
   await expect(frame.locator('body')).toHaveAttribute('data-panel-retained','yes');
   await page.getByRole('button',{name:'Reload panel'}).click();
   await expect(frame.locator('._memory-app-shell')).toBeVisible();
@@ -50,6 +51,11 @@ test('original knowledge panel opens with the workspace identity and all knowled
   await fetch(`${apiBase}/api/workspaces/${workspace.id}`,{method:'DELETE',headers});
  }
 });
+
+async function nativeMemory(headers:Record<string,string>) {
+ const response=await fetch(`${apiBase}/api/memories`,{method:'POST',headers,body:JSON.stringify({name:'Panel memory'})});expect(response.status).toBe(201);const memory=await response.json();
+ let nativeID='';await expect.poll(async()=>{const r=await fetch(`${apiBase}/api/memories`,{headers});const rows=await r.json();const row=rows.find((m:{id:string})=>m.id===memory.id);nativeID=row?.native_agent_id;return row?.status},{timeout:45000}).toBe('ready');return nativeID;
+}
 
 test('panel capabilities reject other workspaces, foreign resource IDs and stale bindings',async()=>{
  const api=new TestApiClient();
@@ -64,7 +70,7 @@ test('panel capabilities reject other workspaces, foreign resource IDs and stale
  const bind=async(id:string,name:string)=>{
   const response=await fetch(`${apiBase}/api/knowledge/binding`,{method:'POST',headers:scoped(id),body:JSON.stringify({name})});
   expect(response.status,await response.clone().text()).toBe(201);
-  return response.json();
+  const binding=await response.json();binding.memory_agent_id=await nativeMemory(scoped(id));return binding;
  };
  const a=await bind(alpha.id,`Panel Alpha ${suffix}`);
  const b=await bind(beta.id,`Panel Beta ${suffix}`);
@@ -121,6 +127,9 @@ test('panel capabilities reject other workspaces, foreign resource IDs and stale
   const preflight=await fetch(root+'bootstrap',{method:'OPTIONS',headers:{Origin:'null','Access-Control-Request-Method':'GET','Access-Control-Request-Headers':'x-multica-knowledge-session'}});
   expect(preflight.status).toBe(204);
   expect(preflight.headers.get('access-control-allow-origin')).toBe('null');
+  const memories=await (await fetch(`${apiBase}/api/memories`,{headers:scoped(alpha.id)})).json();
+  for(const memory of memories){const removed=await fetch(`${apiBase}/api/memories/${memory.id}`,{method:'DELETE',headers:scoped(alpha.id)});expect(removed.status).toBe(202)}
+  await expect.poll(async()=>(await (await fetch(`${apiBase}/api/memories`,{headers:scoped(alpha.id)})).json()).length,{timeout:30000}).toBe(0);
   const detached=await fetch(`${apiBase}/api/knowledge/binding`,{method:'DELETE',headers:scoped(alpha.id)});
   expect(detached.status).toBe(204);
   const stale=await fetch(root+'bootstrap',{headers});
@@ -212,7 +221,7 @@ test('Skill privacy and ACLs are preserved for two Multica members',async()=>{
  const scoped=(api:TestApiClient)=>({Authorization:`Bearer ${api.getToken()}`,'X-Workspace-ID':workspace.id,'Content-Type':'application/json'});
  const created=await fetch(`${apiBase}/api/knowledge/binding`,{method:'POST',headers:scoped(owner),body:JSON.stringify({name:`ACL ${suffix}`})});
  expect(created.status,await created.clone().text()).toBe(201);
- const binding=await created.json();
+ const binding=await created.json();binding.memory_agent_id=await nativeMemory(scoped(owner));
  const sessionFor=async(api:TestApiClient)=>{
   const response=await fetch(`${apiBase}/api/knowledge/panel-session`,{method:'POST',headers:scoped(api)});
   expect(response.status).toBe(200);

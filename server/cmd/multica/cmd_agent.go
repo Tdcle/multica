@@ -210,6 +210,7 @@ func init() {
 	agentUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// agent archive
+	agentArchiveCmd.Flags().Bool("delete-memory", false, "Permanently delete the bound memory; default preserves it for rebinding")
 	agentArchiveCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// agent restore
@@ -832,7 +833,8 @@ func runAgentArchive(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/agents/"+args[0]+"/archive", nil, &result); err != nil {
+	deleteMemory, _ := cmd.Flags().GetBool("delete-memory")
+	if err := client.PostJSON(ctx, fmt.Sprintf("/api/agents/%s/archive?delete_memory=%t", args[0], deleteMemory), nil, &result); err != nil {
 		return fmt.Errorf("archive agent: %w", err)
 	}
 

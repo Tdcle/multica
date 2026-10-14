@@ -277,7 +277,8 @@
     "discard_dialog_title": "Discard unsaved changes?",
     "discard_dialog_description": "You have unsaved changes in this tab. Leaving now will discard them.",
     "discard_keep": "Keep editing",
-    "discard_confirm": "Discard changes"
+    "discard_confirm": "Discard changes",
+    "memory": "Memories"
   },
   "creation_studio": {
     "title": "Create an agent",

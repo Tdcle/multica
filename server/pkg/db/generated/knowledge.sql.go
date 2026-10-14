@@ -55,15 +55,17 @@ func (q *Queries) BindWorkspaceKnowledge(ctx context.Context, arg BindWorkspaceK
 
 const claimKnowledgeExtraction = `-- name: ClaimKnowledgeExtraction :one
 WITH candidate AS (
-    SELECT id FROM knowledge_extraction
-    WHERE (status IN ('pending', 'submitted') AND available_at <= now())
-       OR (status = 'processing' AND lease_until < now())
-    ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1
+    SELECT job.id FROM knowledge_extraction job
+    JOIN agent_memory m ON m.id=job.memory_id AND m.status='ready'
+    WHERE ((job.status IN ('pending', 'submitted') AND job.available_at <= now())
+       OR (job.status = 'processing' AND job.lease_until < now()))
+    ORDER BY job.created_at, job.id
+    FOR UPDATE OF job SKIP LOCKED FOR SHARE OF m SKIP LOCKED LIMIT 1
 )
 UPDATE knowledge_extraction AS job
 SET status = 'processing',
     lease_until = now() + interval '10 minutes', lease_token = gen_random_uuid(), updated_at = now()
-FROM candidate WHERE job.id = candidate.id RETURNING job.id, job.workspace_id, job.issue_id, job.issue_revision, job.instance_id, job.team_id, job.memory_agent_id, job.memory_user_id, job.issue_snapshot, job.status, job.attempts, job.available_at, job.lease_until, job.lease_token, job.source_payload, job.upstream_result, job.last_error, job.created_at, job.updated_at
+FROM candidate WHERE job.id = candidate.id RETURNING job.id, job.workspace_id, job.issue_id, job.issue_revision, job.instance_id, job.team_id, job.memory_agent_id, job.memory_user_id, job.issue_snapshot, job.status, job.attempts, job.available_at, job.lease_until, job.lease_token, job.source_payload, job.upstream_result, job.last_error, job.created_at, job.updated_at, job.agent_id, job.memory_id, job.binding_created_at
 `
 
 func (q *Queries) ClaimKnowledgeExtraction(ctx context.Context) (KnowledgeExtraction, error) {
@@ -89,6 +91,9 @@ func (q *Queries) ClaimKnowledgeExtraction(ctx context.Context) (KnowledgeExtrac
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AgentID,
+		&i.MemoryID,
+		&i.BindingCreatedAt,
 	)
 	return i, err
 }
@@ -136,7 +141,7 @@ const finishKnowledgeExtraction = `-- name: FinishKnowledgeExtraction :one
 UPDATE knowledge_extraction SET status = $3, upstream_result = $4,
     last_error = $5, available_at = $6, attempts = attempts + CASE WHEN $5::text IS NULL THEN 0 ELSE 1 END,
     lease_until = NULL, lease_token = NULL, updated_at = now()
-WHERE id = $1 AND lease_token = $2 AND status = 'processing' RETURNING id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at
+WHERE id = $1 AND lease_token = $2 AND status = 'processing' RETURNING id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at, agent_id, memory_id, binding_created_at
 `
 
 type FinishKnowledgeExtractionParams struct {
@@ -178,12 +183,15 @@ func (q *Queries) FinishKnowledgeExtraction(ctx context.Context, arg FinishKnowl
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AgentID,
+		&i.MemoryID,
+		&i.BindingCreatedAt,
 	)
 	return i, err
 }
 
 const getKnowledgeExtractionForWorkspace = `-- name: GetKnowledgeExtractionForWorkspace :one
-SELECT id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at FROM knowledge_extraction WHERE id = $1 AND workspace_id = $2
+SELECT id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at, agent_id, memory_id, binding_created_at FROM knowledge_extraction WHERE id = $1 AND workspace_id = $2
 `
 
 type GetKnowledgeExtractionForWorkspaceParams struct {
@@ -214,6 +222,9 @@ func (q *Queries) GetKnowledgeExtractionForWorkspace(ctx context.Context, arg Ge
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AgentID,
+		&i.MemoryID,
+		&i.BindingCreatedAt,
 	)
 	return i, err
 }
@@ -369,7 +380,7 @@ func (q *Queries) ListKnowledgeSourceComments(ctx context.Context, arg ListKnowl
 const listKnowledgeSourceTasks = `-- name: ListKnowledgeSourceTasks :many
 SELECT task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.branch_name, task.durable_work_dir, task.channel_context_revision FROM agent_task_queue task
 JOIN issue ON issue.id = task.issue_id
-WHERE task.issue_id = $1 AND task.created_at <= $2 AND issue.workspace_id = $3
+WHERE task.issue_id = $1 AND task.created_at <= $2 AND issue.workspace_id = $3 AND task.agent_id = $4
 ORDER BY task.created_at, task.id
 `
 
@@ -377,10 +388,16 @@ type ListKnowledgeSourceTasksParams struct {
 	IssueID     pgtype.UUID        `json:"issue_id"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
 }
 
 func (q *Queries) ListKnowledgeSourceTasks(ctx context.Context, arg ListKnowledgeSourceTasksParams) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listKnowledgeSourceTasks, arg.IssueID, arg.CreatedAt, arg.WorkspaceID)
+	rows, err := q.db.Query(ctx, listKnowledgeSourceTasks,
+		arg.IssueID,
+		arg.CreatedAt,
+		arg.WorkspaceID,
+		arg.AgentID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +472,7 @@ func (q *Queries) ListKnowledgeSourceTasks(ctx context.Context, arg ListKnowledg
 }
 
 const listWorkspaceKnowledgeExtractions = `-- name: ListWorkspaceKnowledgeExtractions :many
-SELECT id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at FROM knowledge_extraction WHERE workspace_id = $1
+SELECT id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at, agent_id, memory_id, binding_created_at FROM knowledge_extraction WHERE workspace_id = $1
 ORDER BY created_at DESC, id DESC LIMIT $2
 `
 
@@ -493,6 +510,9 @@ func (q *Queries) ListWorkspaceKnowledgeExtractions(ctx context.Context, arg Lis
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AgentID,
+			&i.MemoryID,
+			&i.BindingCreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -525,7 +545,7 @@ UPDATE knowledge_extraction SET status = 'pending', available_at = now(),
     last_error = NULL, attempts = 0, updated_at = now(),
     upstream_result = coalesce(upstream_result, '{}'::jsonb) ||
       jsonb_build_object('retry_failed_skills', true, 'retry_id', gen_random_uuid()::text)
-WHERE id = $1 AND workspace_id = $2 AND status = 'failed' RETURNING id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at
+WHERE knowledge_extraction.id = $1 AND knowledge_extraction.workspace_id = $2 AND knowledge_extraction.status = 'failed' AND EXISTS (SELECT 1 FROM agent_memory_binding b WHERE b.memory_id=knowledge_extraction.memory_id AND b.agent_id=knowledge_extraction.agent_id AND b.created_at=knowledge_extraction.binding_created_at) RETURNING id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at, agent_id, memory_id, binding_created_at
 `
 
 type RetryKnowledgeExtractionParams struct {
@@ -556,13 +576,16 @@ func (q *Queries) RetryKnowledgeExtraction(ctx context.Context, arg RetryKnowled
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AgentID,
+		&i.MemoryID,
+		&i.BindingCreatedAt,
 	)
 	return i, err
 }
 
 const saveKnowledgeExtractionPayload = `-- name: SaveKnowledgeExtractionPayload :one
 UPDATE knowledge_extraction SET source_payload = $3, updated_at = now()
-WHERE id = $1 AND lease_token = $2 AND status = 'processing' RETURNING id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at
+WHERE id = $1 AND lease_token = $2 AND status = 'processing' RETURNING id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at, agent_id, memory_id, binding_created_at
 `
 
 type SaveKnowledgeExtractionPayloadParams struct {
@@ -594,6 +617,9 @@ func (q *Queries) SaveKnowledgeExtractionPayload(ctx context.Context, arg SaveKn
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AgentID,
+		&i.MemoryID,
+		&i.BindingCreatedAt,
 	)
 	return i, err
 }

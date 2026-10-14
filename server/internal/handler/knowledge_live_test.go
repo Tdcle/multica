@@ -52,7 +52,7 @@ func TestKnowledgeLiveDoneToAgentClaim(t *testing.T) {
 	if instanceID == "" {
 		instanceID = "default"
 	}
-	svc := &knowledge.Service{Client: client, Queries: testHandler.Queries, Box: box, InstanceID: instanceID}
+	svc := &knowledge.Service{Client: client, Queries: testHandler.Queries, Box: box, InstanceID: instanceID, TxStarter: testPool}
 	previous := testHandler.Knowledge
 	testHandler.Knowledge = svc
 	t.Cleanup(func() { testHandler.Knowledge = previous })
@@ -73,6 +73,22 @@ func TestKnowledgeLiveDoneToAgentClaim(t *testing.T) {
 	sourceID := dbfx.Issue(t, "Knowledge scope architecture", testutil.Cols{"description": sourceDescription})
 	sourceRuntimeID := dbfx.Runtime(t, "Knowledge producer runtime")
 	sourceAgentID := dbfx.Agent(t, "Knowledge producer agent", sourceRuntimeID)
+	waitMemory := func(agentID string) db.GetAgentMemoryBindingRow {
+		t.Helper()
+		for {
+			m, e := svc.Queries.GetAgentMemoryBinding(ctx, db.GetAgentMemoryBindingParams{WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID)})
+			if e == nil && m.AgentMemory.Status == "ready" {
+				return m
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatalf("memory not ready: %v", e)
+			case <-time.After(time.Second):
+			}
+		}
+	}
+	producerMemory := waitMemory(sourceAgentID)
+	binding = knowledge.MemoryBinding(producerMemory.AgentMemory)
 	sourceTaskID := dbfx.Task(t, sourceAgentID, testutil.Cols{"issue_id": sourceID, "runtime_id": sourceRuntimeID})
 	var producer struct {
 		Task *AgentTaskResponse `json:"task"`
@@ -122,6 +138,7 @@ func TestKnowledgeLiveDoneToAgentClaim(t *testing.T) {
 	if agentID == sourceAgentID {
 		t.Fatal("producer and reader must be different agents")
 	}
+	readerMemory := waitMemory(agentID)
 	issueID := dbfx.Issue(t, "Apply workspace binding scope isolation to new knowledge requests")
 	taskID := dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID})
 	claim := func() AgentTaskResponse {
@@ -136,6 +153,31 @@ func TestKnowledgeLiveDoneToAgentClaim(t *testing.T) {
 		}
 		return *response.Task
 	}
+	isolated := claim()
+	if strings.Contains(isolated.KnowledgeContext, "multica-"+uuidToString(sourceJob.ID)) {
+		t.Fatal("another agent received private memory")
+	}
+	foreignAsset := "chat_memory-" + binding.TeamID + "-" + binding.MemoryAgentID
+	isolatedReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, os.Getenv("NEXT_PUBLIC_API_URL")+"/api/knowledge/assets/"+foreignAsset+"?agent_id="+sourceAgentID, nil)
+	isolatedReq.Header.Set("Authorization", "Bearer "+isolated.AuthToken)
+	isolatedResp, e := http.DefaultClient.Do(isolatedReq)
+	if e != nil {
+		t.Fatal(e)
+	}
+	isolatedResp.Body.Close()
+	if isolatedResp.StatusCode != 404 && isolatedResp.StatusCode != 403 {
+		t.Fatalf("agent crossed private memory boundary: %d", isolatedResp.StatusCode)
+	}
+	dbfx.Exec(t, "UPDATE agent_task_queue SET status='completed' WHERE id=$1", taskID)
+	// Explicitly move the independent memory to another agent, then consume it.
+	for _, id := range []string{sourceAgentID, agentID} {
+		testutil.Call(t, testHandler.BindAgentMemory, withURLParam(newRequest(http.MethodPut, "/api/agents/"+id+"/memory", map[string]any{"memory_id": nil}), "id", id)).Want(200)
+	}
+	testutil.Call(t, testHandler.BindAgentMemory, withURLParam(newRequest(http.MethodPut, "/api/agents/"+agentID+"/memory", map[string]any{"memory_id": uuidToString(producerMemory.AgentMemory.ID)}), "id", agentID)).Want(200)
+	if readerMemory.AgentMemory.ID == producerMemory.AgentMemory.ID {
+		t.Fatal("agents started with the same memory")
+	}
+	taskID = dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID})
 	claimed := claim()
 	if claimed.ID != taskID || !claimed.KnowledgeAvailable || !strings.Contains(claimed.KnowledgeContext, "multica-"+uuidToString(sourceJob.ID)) {
 		t.Fatalf("claim omitted historical source memory: task=%s knowledge=%s", claimed.ID, claimed.KnowledgeContext)
@@ -204,16 +246,16 @@ func TestKnowledgeLiveDoneToAgentClaim(t *testing.T) {
 	dbfx.Exec(t, "UPDATE agent_task_queue SET status='completed' WHERE id=$1", taskID)
 	privateTaskID := dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID})
 	privateClaim := claim()
-	if privateClaim.ID != privateTaskID || strings.Contains(privateClaim.KnowledgeContext, assetID) {
-		t.Fatalf("private history leaked into agent claim: %s", privateClaim.KnowledgeContext)
+	if privateClaim.ID != privateTaskID || !strings.Contains(privateClaim.KnowledgeContext, assetID) {
+		t.Fatalf("bound private memory was omitted from agent claim: %s", privateClaim.KnowledgeContext)
 	}
 	memories, err := svc.SearchFor(ctx, binding, "workspace scope", 10, &identity)
 	if err != nil || len(memories) == 0 {
 		t.Fatalf("native owner ACL was not preserved: memories=%d err=%v", len(memories), err)
 	}
 	memories, err = svc.SearchFor(ctx, binding, "workspace scope", 10, nil)
-	if err != nil || len(memories) != 0 {
-		t.Fatalf("agent retrieved private history: memories=%d err=%v", len(memories), err)
+	if err != nil || len(memories) == 0 {
+		t.Fatalf("agent failed to retrieve its bound private history: memories=%d err=%v", len(memories), err)
 	}
 }
 

@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type {
-  Agent,
-  AgentRuntime,
-  MemberWithUser,
-} from "@multica/core/types";
+import type { Agent, AgentRuntime, MemberWithUser } from "@multica/core/types";
 import { providerSupportsMcpConfig } from "@multica/core/agents";
 import { useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
@@ -29,6 +25,7 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { ActivityTab } from "./tabs/activity-tab";
 import { InstructionsTab } from "./tabs/instructions-tab";
+import { MemoryManager } from "../../knowledge/memory-manager";
 import { SkillsTab } from "./tabs/skills-tab";
 import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
@@ -50,6 +47,7 @@ export type DetailTab =
   | "work"
   | "instructions"
   | "skills"
+  | "memory"
   | "mcp_config"
   | "composio_mcp"
   | "integrations"
@@ -64,6 +62,7 @@ type SecondaryTab = {
   labelKey:
     | "instructions"
     | "skills"
+    | "memory"
     | "mcp_config"
     | "composio_mcp"
     | "integrations"
@@ -77,6 +76,7 @@ type SecondaryTab = {
 const CAPABILITY_TABS: SecondaryTab[] = [
   { id: "instructions", labelKey: "instructions" },
   { id: "skills", labelKey: "skills" },
+  { id: "memory", labelKey: "memory" },
   { id: "mcp_config", labelKey: "mcp_config" },
   { id: "composio_mcp", labelKey: "composio_mcp" },
   { id: "integrations", labelKey: "integrations" },
@@ -97,9 +97,7 @@ const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "settings", labelKey: "settings" },
 ];
 
-const CAPABILITY_IDS = new Set<DetailTab>(
-  CAPABILITY_TABS.map((tab) => tab.id),
-);
+const CAPABILITY_IDS = new Set<DetailTab>(CAPABILITY_TABS.map((tab) => tab.id));
 const SETTINGS_IDS = new Set<DetailTab>(SETTINGS_TABS.map((tab) => tab.id));
 const DETAIL_VIEWS = new Set<DetailTab>([
   "overview",
@@ -226,7 +224,8 @@ export function AgentOverviewPane({
         // showing the tab to anyone else guarantees a 403 on "Reveal & edit".
         // The server stays the boundary; this only removes a dead entry point.
         if (tab.id === "env") return canEdit;
-        if (tab.id === "runtime_config") return runtime?.provider === "openclaw";
+        if (tab.id === "runtime_config")
+          return runtime?.provider === "openclaw";
         return true;
       }),
     [canEdit, runtime?.provider],
@@ -322,7 +321,8 @@ export function AgentOverviewPane({
   const activeSecondaryTab = secondaryTabs.find(
     (tab) => tab.id === effectiveView,
   );
-  const isSecondaryLayout = secondaryTabs.length > 0 && activeSecondaryTab != null;
+  const isSecondaryLayout =
+    secondaryTabs.length > 0 && activeSecondaryTab != null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -431,6 +431,9 @@ export function AgentOverviewPane({
                       }
                       onDirtyChange={setActiveDirty}
                     />
+                  )}
+                  {effectiveView === "memory" && (
+                    <MemoryManager agentId={agent.id} canManage={canEdit} />
                   )}
                   {effectiveView === "skills" && (
                     <SkillsTab

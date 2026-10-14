@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY knowledge_extraction_agent_revision_idx ON knowledge_extraction (workspace_id,issue_id,issue_revision,agent_id);

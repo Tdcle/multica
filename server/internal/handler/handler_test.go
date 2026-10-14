@@ -168,6 +168,11 @@ func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, s
 }
 
 func cleanupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) error {
+	for _, table := range []string{"agent_memory_binding", "agent_memory", "knowledge_extraction", "workspace_knowledge"} {
+		if _, err := pool.Exec(ctx, "DELETE FROM "+table+" WHERE workspace_id IN (SELECT id FROM workspace WHERE slug=$1)", handlerTestWorkspaceSlug); err != nil {
+			return err
+		}
+	}
 	var hasClientUsageTable bool
 	if err := pool.QueryRow(ctx, `SELECT to_regclass('client_usage_daily') IS NOT NULL`).Scan(&hasClientUsageTable); err != nil {
 		return err

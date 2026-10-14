@@ -78,6 +78,8 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"issue_subscriber":                workspaceDelete,
 	"issue_to_label":                  workspaceDelete,
 	"issue_vcs_pull_request":          workspaceDelete,
+	"agent_memory":                    workspaceDelete,
+	"agent_memory_binding":            workspaceDelete,
 	"knowledge_extraction":            workspaceDelete,
 	"knowledge_identity":              workspaceDeleteKeep,
 	"workspace_knowledge":             workspaceDelete,

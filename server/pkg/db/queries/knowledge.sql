@@ -33,10 +33,12 @@ SELECT * FROM knowledge_extraction WHERE id = $1 AND workspace_id = $2;
 
 -- name: ClaimKnowledgeExtraction :one
 WITH candidate AS (
-    SELECT id FROM knowledge_extraction
-    WHERE (status IN ('pending', 'submitted') AND available_at <= now())
-       OR (status = 'processing' AND lease_until < now())
-    ORDER BY created_at, id FOR UPDATE SKIP LOCKED LIMIT 1
+    SELECT job.id FROM knowledge_extraction job
+    JOIN agent_memory m ON m.id=job.memory_id AND m.status='ready'
+    WHERE ((job.status IN ('pending', 'submitted') AND job.available_at <= now())
+       OR (job.status = 'processing' AND job.lease_until < now()))
+    ORDER BY job.created_at, job.id
+    FOR UPDATE OF job SKIP LOCKED FOR SHARE OF m SKIP LOCKED LIMIT 1
 )
 UPDATE knowledge_extraction AS job
 SET status = 'processing',
@@ -58,7 +60,7 @@ UPDATE knowledge_extraction SET status = 'pending', available_at = now(),
     last_error = NULL, attempts = 0, updated_at = now(),
     upstream_result = coalesce(upstream_result, '{}'::jsonb) ||
       jsonb_build_object('retry_failed_skills', true, 'retry_id', gen_random_uuid()::text)
-WHERE id = $1 AND workspace_id = $2 AND status = 'failed' RETURNING *;
+WHERE knowledge_extraction.id = $1 AND knowledge_extraction.workspace_id = $2 AND knowledge_extraction.status = 'failed' AND EXISTS (SELECT 1 FROM agent_memory_binding b WHERE b.memory_id=knowledge_extraction.memory_id AND b.agent_id=knowledge_extraction.agent_id AND b.created_at=knowledge_extraction.binding_created_at) RETURNING *;
 
 -- name: DeleteKnowledgeForWorkspace :exec
 DELETE FROM knowledge_extraction WHERE workspace_id = $1;
@@ -69,7 +71,7 @@ DELETE FROM knowledge_extraction WHERE workspace_id = $1 AND issue_id = $2;
 -- name: ListKnowledgeSourceTasks :many
 SELECT task.* FROM agent_task_queue task
 JOIN issue ON issue.id = task.issue_id
-WHERE task.issue_id = $1 AND task.created_at <= $2 AND issue.workspace_id = $3
+WHERE task.issue_id = $1 AND task.created_at <= $2 AND issue.workspace_id = $3 AND task.agent_id = $4
 ORDER BY task.created_at, task.id;
 
 -- name: ListKnowledgeSourceComments :many

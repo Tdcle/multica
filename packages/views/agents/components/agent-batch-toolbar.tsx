@@ -1,5 +1,7 @@
 "use client";
 
+import { MemoryDeletionChoice } from "../../knowledge/memory-manager";
+
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -52,6 +54,7 @@ export function AgentBatchToolbar({
   const qc = useQueryClient();
   const shouldReduceMotion = useReducedMotion() ?? false;
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [deleteMemory, setDeleteMemory] = useState(false);
   const [confirmAccess, setConfirmAccess] = useState(false);
   const [accessChange, setAccessChange] = useState<AccessChange | null>(null);
   const [busy, setBusy] = useState(false);
@@ -218,7 +221,7 @@ export function AgentBatchToolbar({
             variant="ghost"
             size="sm"
             disabled={!allManageable || busy}
-            onClick={() => setConfirmArchive(true)}
+            onClick={() => { setDeleteMemory(false); setConfirmArchive(true); }}
           >
             <Archive className="mr-1 size-3.5" />
             {t(($) => $.row_actions.archive)}
@@ -245,6 +248,7 @@ export function AgentBatchToolbar({
               {t(($) => $.row_actions.archive_dialog_description)}
             </DialogDescription>
           </DialogHeader>
+          <MemoryDeletionChoice checked={deleteMemory} onChange={setDeleteMemory} />
           <DialogFooter>
             <Button
               type="button"
@@ -262,7 +266,7 @@ export function AgentBatchToolbar({
               disabled={busy}
               onClick={async () => {
                 await runBatch(
-                  (id) => api.archiveAgent(id),
+                  (id) => api.archiveAgent(id, deleteMemory),
                   rows.filter((r) => !r.agent.archived_at),
                 );
                 setConfirmArchive(false);

@@ -21,14 +21,18 @@ func (h *Handler) hydrateTaskKnowledge(parent context.Context, task *db.AgentTas
 	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 	workspaceID := parseUUID(resp.WorkspaceID)
-	binding, err := h.Queries.GetWorkspaceKnowledge(ctx, workspaceID)
+	memory, err := h.Queries.GetAgentMemoryBinding(ctx, db.GetAgentMemoryBindingParams{WorkspaceID: workspaceID, AgentID: task.AgentID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return
 	}
 	if err != nil {
-		slog.Warn("task knowledge binding unavailable", "task_id", uuidToString(task.ID))
+		slog.Warn("task memory binding unavailable", "task_id", uuidToString(task.ID))
 		return
 	}
+	if memory.AgentMemory.Status != "ready" {
+		return
+	}
+	binding := knowledge.MemoryBinding(memory.AgentMemory)
 	resp.KnowledgeAvailable = true
 	query := strings.Join([]string{resp.TriggerCommentContent, resp.ChatMessage, resp.QuickCreatePrompt, resp.AutopilotTitle, resp.AutopilotDescription}, "\n")
 	if task.IssueID.Valid {
