@@ -16,6 +16,7 @@
     "patches/011-multica-task-management.patch",
     "patches/012-multica-panel-design.patch",
     "patches/013-team-skills.patch",
-    "patches/014-skill-bundle-request-size.patch"
+    "patches/014-skill-bundle-request-size.patch",
+    "patches/015-bulk-skill-allocation.patch"
   ]
 }
