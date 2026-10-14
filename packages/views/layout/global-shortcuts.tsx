@@ -67,7 +67,7 @@ export function GlobalShortcuts() {
       goSquads: workspacePaths.squads(),
       goUsage: workspacePaths.usage(),
       goRuntimes: workspacePaths.runtimes(),
-      goSkills: workspacePaths.skills(),
+      goSkills: workspacePaths.knowledge("skills"),
       goSettings: workspacePaths.settings(),
     };
 

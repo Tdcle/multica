@@ -131,14 +131,12 @@ export function BuilderWorkspace({
   // without making the hook depend on every catalog query.
   const encodeContext = useRef({
     draft,
-    workspaceSkills: form.workspaceSkills,
     members: form.members,
     selectedRuntime,
     builderModelCatalog,
   });
   encodeContext.current = {
     draft,
-    workspaceSkills: form.workspaceSkills,
     members: form.members,
     selectedRuntime,
     builderModelCatalog,
@@ -151,7 +149,7 @@ export function BuilderWorkspace({
       return encodeBuilderInput(
         text,
         context.draft,
-        context.workspaceSkills,
+        [],
         context.members,
         context.selectedRuntime,
         context.builderModelCatalog,
@@ -169,10 +167,7 @@ export function BuilderWorkspace({
     onCreated: () => builder.archiveAfterCreate(),
   });
 
-  const skillIdSet = useMemo(
-    () => new Set(form.workspaceSkills.map((skill) => skill.id)),
-    [form.workspaceSkills],
-  );
+  const skillIdSet = useMemo(() => new Set<string>(), []);
   const memberIdSet = useMemo(
     () => new Set(form.members.map((member) => member.user_id)),
     [form.members],

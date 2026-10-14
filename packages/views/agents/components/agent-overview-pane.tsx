@@ -26,7 +26,6 @@ import { cn } from "@multica/ui/lib/utils";
 import { ActivityTab } from "./tabs/activity-tab";
 import { InstructionsTab } from "./tabs/instructions-tab";
 import { MemoryManager } from "../../knowledge/memory-manager";
-import { SkillsTab } from "./tabs/skills-tab";
 import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
@@ -75,7 +74,6 @@ type SecondaryTab = {
 
 const CAPABILITY_TABS: SecondaryTab[] = [
   { id: "instructions", labelKey: "instructions" },
-  { id: "skills", labelKey: "skills" },
   { id: "memory", labelKey: "memory" },
   { id: "mcp_config", labelKey: "mcp_config" },
   { id: "composio_mcp", labelKey: "composio_mcp" },
@@ -434,13 +432,6 @@ export function AgentOverviewPane({
                   )}
                   {effectiveView === "memory" && (
                     <MemoryManager agentId={agent.id} canManage={canEdit} />
-                  )}
-                  {effectiveView === "skills" && (
-                    <SkillsTab
-                      agent={agent}
-                      runtime={runtime}
-                      canEdit={canEdit}
-                    />
                   )}
                   {effectiveView === "mcp_config" && (
                     <McpConfigTab

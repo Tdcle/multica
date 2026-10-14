@@ -71,7 +71,7 @@ export function useCreateAgentSubmit(options: {
     try {
       const agent = await api.createAgent(
         buildCreateAgentRequest({
-          draft,
+          draft: { ...draft, skillIds: new Set() },
           runtimeId,
           template,
           duplicateSource,

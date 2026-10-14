@@ -126,6 +126,8 @@ test("Memory shares Multica appearance across pages, dialogs, graph and live the
           '---\nname: memory-design-guide\ndescription: Visual regression fixture\n---\n\n# Memory design\n\nUse **Multica** surfaces and `semantic tokens`.\n\n| Control | Purpose |\n| --- | --- |\n| Search | Recall experience |\n\n```ts\nconst theme = "multica";\n```',
       })
     ).skill_id;
+    // Skills opens on Team Assets; share this visual fixture in that library.
+    await panel("meta/asset/update", { asset_id: skillID, visibility: "team" });
     await api.markUserOnboarded();
     await page.addInitScript((token) => {
       if (window.self !== window.top) return;

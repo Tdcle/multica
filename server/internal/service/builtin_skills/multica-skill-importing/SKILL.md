@@ -18,6 +18,28 @@ known.
 Every claim below is traced to source in
 `references/skill-importing-source-map.md`. When in doubt, read that file.
 
+## Managed Memory deployment
+
+When this workspace uses the Memory console, manage skills in **Memory → Skills**.
+Import shared bundles into Team Assets, then allocate references to the relevant
+Memory agents. One team skill can be bound to multiple agents; unbinding preserves
+the team asset. Agent-owned extracted skills retain their independent versions.
+The web/desktop agent creation forms do not select legacy workspace skills.
+The CLI import commands below target the legacy Multica skill store and must not
+be used to install a Memory skill. Use the console's directory importer instead.
+
+To consume a bound Memory skill, use task-scoped knowledge commands:
+
+```bash
+multica knowledge search "<keywords>" --type skill
+multica knowledge read <asset-id>
+multica knowledge read <asset-id> --ref references/example.md
+```
+
+The first read returns SKILL.md and the resource manifest; `--ref` reads a
+supporting file through the same asset permission and agent binding checks.
+Never substitute a legacy workspace skill UUID for a native Memory asset ID.
+
 ## The invariant
 
 A skill is installed for Multica only when it exists in the current workspace's

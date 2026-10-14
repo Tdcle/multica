@@ -1,1 +1,1 @@
-export { SkillsPage as default } from "@multica/views/skills";
+export { SkillsRedirect as default } from "@multica/views/knowledge";

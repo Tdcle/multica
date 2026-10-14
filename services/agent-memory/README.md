@@ -232,3 +232,31 @@ optional `@context-proxy/cost-guard` module. Local SQLite startup and authentica
 inference work; this is not a passing typecheck claim. Proxy `auth.serviceToken`
 must match Core's Bearer gate. Keep `TMC_CALLBACK_URL` as the Panel base URL and
 `KNOWLEDGE_PUBLIC_BASE_URL` with the `/v3` prefix.
+
+## Skills management
+
+Web and desktop use **Memory → Skills** as their skill management entry. Old
+Skills URLs redirect to that console. Team directory imports create shared
+assets without an owner agent or an automatic binding. Allocate references to
+one or more Memory agents as needed; detaching a reference preserves the team
+asset. Extracted agent-owned skills keep their existing native lifecycle.
+Task-scoped `multica knowledge read <skill-id> --ref <resource-path>` reads
+supporting files under the same membership, asset ACL and binding checks.
+
+To migrate existing unbound, non-plugin Multica skills into their workspace's
+native team, run a preflight and then apply using a private backup path:
+
+```bash
+bash scripts/dev-env.sh exec -- node scripts/migrate-agent-memory-skills.mjs \
+  --workspace <slug> --backup <private-path>/skills.json
+bash scripts/dev-env.sh exec -- node scripts/migrate-agent-memory-skills.mjs \
+  --workspace <slug> --backup <private-path>/skills.json --apply
+```
+
+The migrator preserves creator identity, configuration and resource paths,
+records old/native IDs, and reads back every body and file before retiring the
+original rows in one transaction. It refuses active agent bindings, plugin-owned
+rows, conflicting team names and source changes. After an interrupted import,
+retry with the same backup path: source IDs in native metadata recover accepted
+creates without duplication. Backups and receipts are private files; protect
+them as application data.

@@ -19,12 +19,8 @@ import { isRuntimeUsableForUser, runtimeListOptions } from "@multica/core/runtim
 import type {
   MemberWithUser,
   RuntimeDevice,
-  SkillSummary,
 } from "@multica/core/types";
-import {
-  memberListOptions,
-  skillListOptions,
-} from "@multica/core/workspace/queries";
+import { memberListOptions } from "@multica/core/workspace/queries";
 
 interface CreateAgentForm {
   draft: AgentDraft;
@@ -37,7 +33,6 @@ interface CreateAgentForm {
   usableRuntimes: RuntimeDevice[];
   selectedRuntime: RuntimeDevice | null;
   members: MemberWithUser[];
-  workspaceSkills: SkillSummary[];
   currentUserId: string | null;
   /** Every non-name precondition the create button depends on. */
   draftReady: boolean;
@@ -85,7 +80,6 @@ export function useCreateAgentForm(options?: {
     isError: runtimesFailed,
   } = useQuery(runtimeListOptions(wsId));
   const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: workspaceSkills = [] } = useQuery(skillListOptions(wsId));
 
   const [draft, setDraft] = useState<AgentDraft>(EMPTY_AGENT_DRAFT);
 
@@ -133,7 +127,6 @@ export function useCreateAgentForm(options?: {
     usableRuntimes,
     selectedRuntime,
     members,
-    workspaceSkills,
     currentUserId,
     draftReady:
       selectedRuntime != null &&

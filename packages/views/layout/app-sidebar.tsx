@@ -163,7 +163,6 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "runtimes", labelKey: "runtimes" },
-  { key: "skills", labelKey: "skills" },
   { key: "settings", labelKey: "settings" },
 ];
 
