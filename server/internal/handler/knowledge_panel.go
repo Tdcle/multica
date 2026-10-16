@@ -613,7 +613,25 @@ const completed = await new Promise(resolve => {
 });
 onboardedKey = 'tdai-panel.onboarded.' + (context.session.user?.user_id || 'anonymous');
 if (completed) memory.set(onboardedKey, '1');
-window.__MULTICA_PANEL_CONTEXT__ = {can_manage_space: context.can_manage_space === true};
+// Restore navigation before importing the router or mounting any view.
+const position = await new Promise(resolve => {
+ const finish = value => {clearTimeout(timeout); window.removeEventListener('message', receive); resolve(value);};
+ const receive = event => {
+  if (event.source === window.parent && event.data?.type === 'multica-memory-position-restore') finish(event.data.position);
+ };
+ const timeout = setTimeout(() => finish(null), 2000);
+ window.addEventListener('message', receive);
+ window.parent.postMessage({type:'multica-memory-position-read'}, '*');
+});
+let viewState;
+try {
+ const saved = typeof position === 'string' && position.length <= 32768 ? JSON.parse(position) : null;
+ if (saved && /^\/(memory|skills|wiki|code|team\/(agents|members)|guide|analytics)$/.test(saved.route) && saved.values && saved.scroll) {
+  viewState = saved;
+  history.replaceState(null, '', prefix + '#' + saved.route);
+ }
+} catch { /* A stale memento must not prevent opening Memory. */ }
+window.__MULTICA_PANEL_CONTEXT__ = {can_manage_space: context.can_manage_space === true, view_state: viewState};
 localStorage.setItem('tdai-panel.session', JSON.stringify(context.session));
 localStorage.setItem('tdai-memory.activeTeam.v1', context.team_id);
 for (const entry of window.__MULTICA_PANEL_MODULES__) await import(entry);
