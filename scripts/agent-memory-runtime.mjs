@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, rename, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 // The upstream engines keep their own tool loops. Codex only chooses the next
 // response; it never executes a requested memory tool on the host itself.
@@ -29,7 +29,69 @@ const port = Number(process.env.MULTICA_MEMORY_RUNTIME_PORT || 8430);
 const token = process.env.MULTICA_MEMORY_RUNTIME_TOKEN;
 if (!token) throw new Error("MULTICA_MEMORY_RUNTIME_TOKEN is required");
 const command = process.env.MULTICA_MEMORY_RUNTIME_COMMAND || "codex";
-const model = process.env.MULTICA_MEMORY_RUNTIME_MODEL;
+const defaultModel = process.env.MULTICA_MEMORY_RUNTIME_MODEL;
+const settingsPath = process.env.MULTICA_MEMORY_RUNTIME_SETTINGS;
+const requestTimeoutMs = Number(process.env.MULTICA_MEMORY_RUNTIME_TIMEOUT_MS || 600_000);
+let settings = {};
+if (settingsPath) {
+  try { settings = JSON.parse(await readFile(settingsPath, "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+}
+let catalogCache;
+let catalogExpires = 0;
+let settingsWrite = Promise.resolve();
+async function catalog() {
+  if (catalogCache && Date.now() < catalogExpires) return catalogCache;
+  const stdout = await new Promise((resolve, reject) => execFile(command, ["debug", "models", "--bundled"],
+    { timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => error ? reject(new Error("model catalog unavailable")) : resolve(stdout)));
+  const raw = JSON.parse(stdout);
+  const models = (raw.models || []).filter(m => m.visibility === "list" && typeof m.slug === "string").map(m => ({
+    id: m.slug, name: m.display_name || m.slug,
+    default_effort: m.default_reasoning_level || "",
+    efforts: (m.supported_reasoning_levels || []).map(r => r.effort).filter(r => typeof r === "string"),
+  }));
+  if (!models.length) throw new Error("model catalog unavailable");
+  catalogCache = models;
+  catalogExpires = Date.now() + 60_000;
+  return models;
+}
+function scope(instance, team) {
+  if (typeof instance !== "string" || typeof team !== "string" || !/^[\w.-]{1,160}$/.test(instance) || !/^[\w.-]{1,160}$/.test(team)) throw new Error("invalid workspace scope");
+  return JSON.stringify([instance, team]);
+}
+function selection(key) {
+  return settings[key] || { model: defaultModel || "", effort: "" };
+}
+async function effectiveSelection(key, models = undefined) {
+  const chosen = selection(key);
+  if (chosen.model && chosen.effort) return chosen;
+  models ||= await catalog();
+  const selected = chosen.model ? models.find(m => m.id === chosen.model) : models[0];
+  if (!selected) throw new Error("configured model is unavailable");
+  return { model: selected.id, effort: chosen.effort || selected.default_effort };
+}
+async function modelSettings(req, res, action) {
+  const body = await readBody(req);
+  const key = scope(body.instance_id, body.team_id);
+  const models = await catalog();
+  if (action === "set") {
+    const selected = models.find(m => m.id === body.model);
+    if (!selected || !selected.efforts.includes(body.effort)) return send(res, 400, { error: { message: "unsupported model or reasoning effort" } });
+    if (!settingsPath) return send(res, 503, { error: { message: "settings storage is not configured" } });
+    const change = async () => {
+      const next = { ...settings, [key]: { model: selected.id, effort: body.effort } };
+      await mkdir(dirname(settingsPath), { recursive: true, mode: 0o700 });
+      const temporary = `${settingsPath}.${randomUUID()}.tmp`;
+      try { await writeFile(temporary, JSON.stringify(next), { mode: 0o600 }); await rename(temporary, settingsPath); }
+      finally { await rm(temporary, { force: true }); }
+      settings = next;
+    };
+    const saved = settingsWrite.then(change);
+    settingsWrite = saved.catch(() => {});
+    await saved;
+  }
+  return send(res, 200, { models, ...await effectiveSelection(key, models) });
+}
 let busy = false;
 const queue = [];
 const controllers = new Set();
@@ -59,7 +121,8 @@ async function readBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-async function complete(body, signal) {
+async function complete(body, signal, chosen) {
+  const model = chosen.model;
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     throw new Error("messages must be a non-empty array");
   }
@@ -75,6 +138,7 @@ async function complete(body, signal) {
       "Do not use your native tools, inspect the host, or perform the requested operations yourself.",
       "Choose only from the function tools supplied below. The caller executes them and supplies their results on the next request.",
       "Return content as the literal assistant response, including JSON or Markdown when requested by the supplied messages.",
+      "The content field must contain the complete requested payload, never a summary or description of it. Preserve required output delimiters exactly; do not translate or reformat the requested protocol.",
       "Return tool_calls with function names and JSON-encoded arguments, or an empty array when no tool call is needed.",
       "Honor tool_choice. Never invent a tool. The enclosing response schema is transport only; it does not replace a JSON format requested inside content.",
       JSON.stringify({ messages: body.messages, tools, tool_choice: body.tool_choice, response_format: body.response_format }),
@@ -90,10 +154,17 @@ async function complete(body, signal) {
       args.push("--disable", feature);
     }
     if (model) args.push("--model", model);
+    if (chosen.effort) args.push("-c", `model_reasoning_effort=${JSON.stringify(chosen.effort)}`);
     args.push("-");
     let usage;
     let pending = "";
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], signal });
+    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
+    const abort = () => {
+      try { process.platform === "win32" ? child.kill("SIGKILL") : process.kill(-child.pid, "SIGKILL"); } catch { /* Already exited. */ }
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    child.once("exit", () => signal.removeEventListener("abort", abort));
+    if (signal.aborted) abort();
     child.stdout.on("data", (chunk) => {
       pending += chunk.toString();
       const lines = pending.split("\n");
@@ -140,7 +211,7 @@ async function drain() {
   busy = true;
   try {
     if (!job.controller.signal.aborted) {
-      send(job.res, 200, await complete(job.body, job.controller.signal));
+      send(job.res, 200, await complete(job.body, job.controller.signal, job.selection));
     }
   } catch {
     send(job.res, 502, { error: { message: "Codex inference failed" } });
@@ -154,12 +225,16 @@ async function drain() {
 const server = createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/health") return send(res, 200, { status: stopping ? "stopping" : "ok", provider: "codex", busy, queued: queue.length });
   if (!authorized(req)) return send(res, 401, { error: { message: "unauthorized" } });
+  if (req.method === "POST" && ["/settings/get", "/settings/set"].includes(req.url)) {
+    try { return await modelSettings(req, res, req.url.endsWith("/set") ? "set" : "get"); }
+    catch (error) { return send(res, /scope|JSON/.test(error.message) ? 400 : 503, { error: { message: /scope/.test(error.message) ? "invalid workspace scope" : "model settings unavailable" } }); }
+  }
   if (req.method !== "POST" || req.url !== "/v1/chat/completions") return send(res, 404, { error: { message: "not found" } });
   if (stopping) return send(res, 503, { error: { message: "runtime is stopping" } });
   if (controllers.size >= maxPending) return send(res, 429, { error: { message: "runtime queue is full; retry later" } });
   const controller = new AbortController();
   controllers.add(controller);
-  const timeout = setTimeout(() => controller.abort(), 10 * 60 * 1000);
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
   const cleanup = () => { clearTimeout(timeout); controllers.delete(controller); };
   controller.signal.addEventListener("abort", () => {
     const index = queue.findIndex(job => job.controller === controller);
@@ -174,11 +249,16 @@ const server = createServer(async (req, res) => {
       return send(res, 400, { error: { message: body.stream ? "configure the upstream engine for non-streaming inference" : "invalid inference request" } });
     }
     if (controller.signal.aborted) { cleanup(); return; }
-    queue.push({ body, res, controller, cleanup });
+    const instance = req.headers["x-multica-memory-instance"];
+    const team = req.headers["x-multica-memory-team"];
+    const key = instance || team ? scope(instance, team) : "";
+    const chosen = await effectiveSelection(key);
+    if (controller.signal.aborted) { cleanup(); return; }
+    queue.push({ body, res, controller, cleanup, selection: { ...chosen } });
     void drain();
   } catch (error) {
     cleanup();
-    const status = error instanceof SyntaxError || /messages|exceeds/.test(error.message) ? 400 : 502;
+    const status = error instanceof SyntaxError || /messages|exceeds|scope/.test(error.message) ? 400 : 502;
     send(res, status, { error: { message: status === 400 ? "invalid inference request" : "Codex inference failed" } });
   }
 });

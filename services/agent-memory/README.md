@@ -95,6 +95,39 @@ node scripts/agent-memory.mjs start
 node scripts/agent-memory.mjs status
 ```
 
+In the embedded console, **Memory → Settings → Extraction model** selects the
+model and reasoning effort for the current workspace. Multica owners/admins can
+save; members can read. Every request rechecks live membership. The model catalog
+comes from the installed `codex debug models --bundled` command, including each
+model's supported reasoning levels. No API key is exposed to the browser.
+
+Workspace selections are stored atomically in private `model-settings.json` under
+the existing state directory, keyed by native instance and team. Keep this file
+with the service data when moving an installation. Restarting Memory preserves
+selections. New inference requests snapshot the configuration when queued; already
+accepted requests retain their selection. Wiki extraction and summaries, memory
+extraction/deduplication/profile generation, and Skill extraction all carry that
+scope to the runtime. `MULTICA_MEMORY_RUNTIME_MODEL` remains the initial default.
+
+Wiki progress uses the engine's file counters and phase progress. Status refreshes
+are read-only; they do not retry extraction. Without a progress callback, the UI
+shows the current phase without an estimated percentage. Closed FILE blocks accept
+shortened opening delimiters from model output; unsafe paths and unclosed blocks
+are still rejected. In managed Codex mode,
+the SDK does not automatically retry a failed inference; existing bounded durable
+pipeline retries remain owned by Core. Runtime deadlines also kill the CLI process
+group so an expired request cannot keep blocking later requests.
+
+Focused validation (the default commands do not invoke a real model):
+
+```bash
+node --test scripts/agent-memory-runtime.e2e.mjs
+bash scripts/dev-env.sh exec -- pnpm exec playwright test e2e/memory-model-settings.spec.ts
+# Explicit opt-in: also extract an isolated Wiki using local Codex.
+bash scripts/dev-env.sh exec -- env MULTICA_RUN_REAL_AGENT_SMOKE=1 \
+  pnpm exec playwright test e2e/memory-model-settings.spec.ts
+```
+
 The preparation script preserves an existing checkout and verifies each patch;
 settings and credentials are generated once in ignored `.agent-memory/local/`.
 `init` refuses to overwrite them. Configuration files are mode 0600 and the state
