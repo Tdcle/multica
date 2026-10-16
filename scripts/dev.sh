@@ -55,6 +55,12 @@ bash scripts/ensure-postgres.sh "$ENV_FILE"
 echo "==> Running migrations..."
 (cd server && go run ./cmd/migrate up)
 
+# ---------- Local Memory ----------
+if [ -n "${MULTICA_AGENT_MEMORY_STATE_DIR:-}" ]; then
+  echo "==> Starting configured Memory services..."
+  node scripts/agent-memory.mjs ensure
+fi
+
 # ---------- Start services ----------
 echo ""
 echo "✓ Ready. Starting services..."

@@ -1192,6 +1192,14 @@ Start the rest with 'make up C=api,web', or run 'make up C=daemon' from your own
   migrate_database
   ok "$DB_NAME reachable through DATABASE_URL and migrated"
 
+  # The local app launcher also uses this path. Start its configured Memory
+  # service before serving requests; repeated opens reuse healthy processes.
+  if [ -n "${MULTICA_AGENT_MEMORY_STATE_DIR:-}" ]; then
+    step "Memory"
+    (cd "$REPO_ROOT" && node scripts/agent-memory.mjs ensure) \
+      || die "Memory could not start. Check its private component logs in $MULTICA_AGENT_MEMORY_STATE_DIR."
+  fi
+
   step "Components: $COMPONENTS"
   component_selected api && start_api
   component_selected web && start_web

@@ -102,6 +102,18 @@ root is 0700. Add the variables from its private `multica.env` to this checkout'
 ignored `.env` or `.env.worktree`, preserving existing database/port settings, then
 restart the Multica API. Keep the generated encryption key across restarts.
 
+The generated environment includes `MULTICA_AGENT_MEMORY_STATE_DIR`. With it set,
+`make up`, `make dev`, and the local desktop launcher start the existing Memory
+stack before Multica. Reopening the app reuses healthy processes; missing
+processes are started using the same credentials and data directories. Startup
+checks the configured endpoints and credentials before launching anything, and
+fails visibly if they belong to a different state directory. Existing setups can
+add `MULTICA_AGENT_MEMORY_STATE_DIR=/absolute/path/to/the/existing/state` to their
+ignored environment file. Leave it unset for externally managed Memory services.
+The startup path does not replace configuration, regenerate credentials, rebuild engines or reset data.
+Memory remains independent of a checkout's `make down`; stop it explicitly with
+`node scripts/agent-memory.mjs stop` when no checkout needs it.
+
 Use `MULTICA_AGENT_MEMORY_STATE_DIR` for another private state directory,
 `MULTICA_AGENT_MEMORY_SOURCE_DIR` for another pinned source checkout, and
 `MULTICA_MEMORY_PORT_BASE` for another loopback port range. Defaults are runtime
@@ -266,3 +278,14 @@ console gateway, covering the native 50 MiB resource bundle plus JSON/base64
 overhead. Other routes retain their existing request limits. This avoids
 rejecting otherwise valid directory imports or migrations at the default
 1 MiB Core parser limit.
+
+
+Local startup validation, after native preparation and build:
+
+```bash
+node --test scripts/agent-memory-startup.e2e.mjs
+```
+
+This runs the real native services on temporary ports and private data roots,
+checks concurrent app-start requests, process reuse, foreign-port protection,
+and knowledge persistence after a cold restart. It makes no model requests.
