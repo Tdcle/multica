@@ -1,0 +1,15 @@
+diff --git a/MemoryPanel/web/src/components/team/TeamManagementPanel.tsx b/MemoryPanel/web/src/components/team/TeamManagementPanel.tsx
+index 56a9197..d4eed8b 100644
+--- a/MemoryPanel/web/src/components/team/TeamManagementPanel.tsx
++++ b/MemoryPanel/web/src/components/team/TeamManagementPanel.tsx
+@@ -290,8 +290,8 @@ export default function TeamManagementPanel({
+             />
+           )}
+ 
+-          {/* === 默认 Agent 模板（仅全局 admin 可见）=== */}
+-          {showAgents && canManageSpace && (
++          {/* Default member templates require native system administration. */}
++          {showAgents && _isAdmin && !multicaEmbed && (
+             <DefaultAgentTemplateSection
+               teamId={activeTeam.team_id}
+               teamName={activeTeam.name}
