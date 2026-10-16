@@ -1015,6 +1015,11 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		})
 	}
 	codexArgs := buildCodexArgs(opts, b.cfg.Logger)
+	if b.cfg.Env["MULTICA_CLI_PATH"] != "" {
+		// Login startup files can select a different installed Multica CLI.
+		// Append after custom/profile arguments so the runtime-owned policy wins.
+		codexArgs = append(codexArgs, "-c", "allow_login_shell=false")
+	}
 	cmd := runtimeCmd.exec(runCtx, codexArgs...)
 	hideAgentWindow(cmd)
 	// Run codex in its own process group so a cancel-on-stuck cleanup

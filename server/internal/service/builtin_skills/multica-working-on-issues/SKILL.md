@@ -334,12 +334,19 @@ multica issue create --title "Step 3" --parent <issue-id> --assignee <agent> --s
 
 ## Agent memory
 
+In a managed runtime, `MULTICA_CLI_PATH` selects the CLI paired with the daemon
+and desktop. Invoke that quoted absolute executable for every `multica ...`
+example below: POSIX `"$MULTICA_CLI_PATH" ...`, PowerShell
+`& $env:MULTICA_CLI_PATH ...`. Explicitly nested login shells may reorder PATH;
+keep using the paired executable there. Managed Codex tools use non-login shells.
+
 When an agent has a ready memory binding, each new task receives relevant
 history from that memory and its explicitly bound assets in its per-turn context. Treat those memories as
 past evidence: check that they still apply and follow the current task's instructions.
 For additional context, run `multica knowledge search "<question or keywords>"`.
 It retrieves Chat Memory, Skill, Wiki and CodeGraph using their native engines.
 The JSON includes `items` and `warnings`; warnings identify incomplete retrieval.
+These knowledge commands emit JSON by default; do not add `--output`.
 Filter with `--type chat_memory|skill|wiki|code_graph`. Each hit retains its asset
 ID, page reference or source task ID. Use `multica knowledge list` for available
 assets and processing status (paginate with `--limit` and `--offset`). Read full

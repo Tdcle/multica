@@ -224,6 +224,11 @@ grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.g
 
 ## Agent memory
 
+- `server/internal/daemon/execenv/cli.go`: daemon-owned absolute `MULTICA_CLI_PATH` and PATH binding.
+- `server/internal/daemon/daemon.go`: resolve the running CLI and configure every task environment.
+- `server/pkg/agent/codex.go`: managed Codex shell tools use non-login mode after custom argument merging.
+- `e2e/desktop-cli-knowledge.spec.ts`: real desktop CLI daemon, login-shell regression, search and full-content read.
+
 - `server/cmd/multica/cmd_knowledge.go`: `multica knowledge search`.
 - `server/cmd/multica/cmd_knowledge.go`: paginated `knowledge list` and asset `knowledge read`.
 - `server/internal/handler/knowledge_read.go`: task-aware catalog, retrieval and read routes.

@@ -56,6 +56,11 @@ engines. Web and Desktop share the Memory console and agent memory controls.
   per-turn prompt. Explicit native fixed-asset bindings select additional assets.
   Human reads retain the original catalog and native ACLs. On-demand CLI reads
   support native layers, Wiki references and code exploration.
+  Agent shell commands use `MULTICA_CLI_PATH`, the absolute executable paired with
+  the running daemon/desktop. Managed Codex shell tools disable login semantics
+  so shell startup cannot silently select a different installed Multica version.
+  Explicitly nested login shells still use the quoted absolute entry.
+
 - The embedded console uses Multica's shared design tokens, Inter and Geist Mono
   fonts, Lucide icons and compact secondary navigation. Controls, menus, dialogs,
   tables, resource cards, Markdown and graph canvases follow the same surface and
@@ -322,3 +327,18 @@ node --test scripts/agent-memory-startup.e2e.mjs
 This runs the real native services on temporary ports and private data roots,
 checks concurrent app-start requests, process reuse, foreign-port protection,
 and knowledge persistence after a cold restart. It makes no model requests.
+
+Real desktop daemon retrieval acceptance (explicit model use):
+
+```bash
+node apps/desktop/scripts/bundle-cli.mjs
+bash scripts/dev-env.sh exec -- env MULTICA_RUN_REAL_AGENT_SMOKE=1 \
+  MULTICA_KNOWLEDGE_CLI_PATH="$PWD/apps/desktop/resources/bin/multica" \
+  MULTICA_KNOWLEDGE_CODEX_MODEL=<available-model> \
+  pnpm exec playwright test e2e/desktop-cli-knowledge.spec.ts
+```
+
+This starts the bundled CLI's real daemon in an isolated profile/workspace, then
+runs a real Codex chat task. Acceptance requires actual search/read tool calls,
+CLI path evidence, and a full-text marker beyond the automatically recalled
+excerpt. The default test suite skips this case without explicit opt-in.
