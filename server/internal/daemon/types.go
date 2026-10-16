@@ -101,6 +101,7 @@ type Task struct {
 	WorkspaceContext   string `json:"workspace_context,omitempty"`
 	KnowledgeAvailable bool   `json:"knowledge_available,omitempty"`
 	KnowledgeContext   string `json:"knowledge_context,omitempty"`
+	KnowledgeScope     string `json:"knowledge_scope,omitempty"`
 	// IssueStatuses mirrors the claim payload's active CUSTOM status catalog
 	// (MUL-6460): key/name/category/description per status, already in catalog
 	// order. Rendered into the brief's status-command line; empty (including on

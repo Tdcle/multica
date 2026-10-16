@@ -234,8 +234,12 @@ grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.g
 - `server/internal/handler/knowledge_read.go`: task-aware catalog, retrieval and read routes.
 - `server/internal/knowledge/retrieval.go`: native four-engine retrieval and asset ACL checks.
 - `server/internal/handler/knowledge.go`: caller-aware search and workspace binding.
-- `server/internal/handler/knowledge_task.go`: claim-time retrieval after workspace verification.
+- `server/internal/handler/knowledge_task.go`: claim-time native context construction after workspace verification.
 - `server/internal/daemon/prompt.go`: per-turn knowledge context.
 - `server/internal/knowledge/service.go`: native owner identity and human ACL checks.
 - `server/migrations/419_agent_memory_spaces.up.sql`: per-agent Done transition extraction and automatic binding.
 - `server/internal/knowledge/spaces.go`: provisioning, retry and native deletion reconciliation.
+
+- `server/internal/knowledge/context.go`: authorized native injector context and scope fingerprint.
+- `server/internal/daemon/knowledge_scope.go`: discard provider history after Memory scope changes.
+- `services/agent-memory/patches/020-native-context-injectors.patch`: original TS injectors exposed through an internal read-only endpoint.

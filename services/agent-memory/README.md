@@ -37,7 +37,9 @@ engines. Web and Desktop share the Memory console and agent memory controls.
 - The worker waits for existing executions to finish, then freezes the issue,
   comments, that agent's execution text/tool results and final output. It redacts secrets,
   excludes internal reasoning and retains attribution and corrections.
-- Chat delivery uses batches of 100. Skill archives respect the native 500-record
+- Chat delivery uses batches of 100. Native L0 accepts only user/assistant roles;
+  tool calls/results retain their full attributed text in L0 while Skill archives
+  preserve the original tool roles. Skill archives respect the native 500-record
   and byte limits; batch boundaries are frozen with the source. Stable
   IDs, timestamps and leased SQL checkpoints support retries and process recovery.
   The final Chat chunk triggers the native pipeline after all chunks are stored.
@@ -52,8 +54,18 @@ engines. Web and Desktop share the Memory console and agent memory controls.
   including its private history. Other agents' memory never enters their prompt
   automatically. Rebinding deliberately transfers access to existing content.
   Workspace identity remains the native team/authorization boundary.
-- Task claims retrieve relevant Chat Memory, Skills, Wiki and CodeGraph into the
-  per-turn prompt. Explicit native fixed-asset bindings select additional assets.
+- Each task claim calls the internal read-only `/v3/multica/context` endpoint
+  in the existing MemoryProxy process. It directly runs the original
+  `TdaiProfileMemoryInjector`, `SkillInjector` and `KnowledgeToolsInjector`:
+  L3 long-term memory, L2 scene navigation and bound asset catalogs are injected;
+  L0/L1 and full documents are retrieved on demand. Tool instructions use the
+  managed Multica CLI. Model traffic and provider login never pass through Proxy.
+  Multica authorizes each candidate using current bindings, native ACLs and
+  independent content-store scope checks before rendering. Catalogs are rebuilt
+  per execution without cross-execution caches. Memory scope changes discard
+  provider-session resumption so old injected content is not carried forward.
+  Partial/failed context builds include visible warnings in the execution prompt.
+  Explicit native fixed-asset bindings select additional assets.
   Human reads retain the original catalog and native ACLs. On-demand CLI reads
   support native layers, Wiki references and code exploration.
   Agent shell commands use `MULTICA_CLI_PATH`, the absolute executable paired with
@@ -342,3 +354,16 @@ This starts the bundled CLI's real daemon in an isolated profile/workspace, then
 runs a real Codex chat task. Acceptance requires actual search/read tool calls,
 CLI path evidence, and a full-text marker beyond the automatically recalled
 excerpt. The default test suite skips this case without explicit opt-in.
+
+
+## Native context acceptance
+
+`e2e/memory-context.spec.ts` checks native L3 injection, team-owned Skill
+catalogs, private isolation, shared bindings, detach and internal endpoint auth.
+`e2e/native-memory-context.spec.ts` requires explicit real-agent opt-in and runs
+a producer issue, confirms no extraction before Done, waits for native extraction,
+then uses a separate agent sharing the memory to search and read the original
+history and a full Skill. Chat completion must not create another extraction.
+Use the same environment and opt-in variables as the paired CLI smoke, selecting
+this test file. Native Proxy's optional cost-guard module is absent in the local
+standalone setup; its full typecheck retains the existing unresolved-module error.

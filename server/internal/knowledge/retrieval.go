@@ -178,6 +178,9 @@ func (s *Service) Read(ctx context.Context, binding db.WorkspaceKnowledge, ident
 			return nil, fmt.Errorf("invalid memory layer")
 		}
 		input = map[string]any{"block_id": id, "layer": layer, "limit": limit, "offset": offset}
+		if layer == "L2" && ref != "" {
+			input["path"] = ref
+		}
 		path = "/api/v1/chat-memory/layer"
 	default:
 		return nil, &UpstreamError{Status: 400, Code: 400, Path: "asset/read"}

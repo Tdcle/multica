@@ -7292,6 +7292,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
 
 	reused := gateResumeToReusedWorkdir(&task, &taskCtx, env.WorkDir, sessionHomeReachable(provider, env, envReused), taskLog)
+	if err := gateResumeToKnowledgeScope(&task, &taskCtx, env.RootDir); err != nil {
+		return TaskResult{}, err
+	}
 	// A reused workdir is necessary but not sufficient for a Codex resume: the
 	// prior thread's rollout must actually be present in this task's CODEX_HOME
 	// sessions (MUL-4424 isolates them). Drop the resume before the brief is
