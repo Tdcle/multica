@@ -340,8 +340,9 @@ example below: POSIX `"$MULTICA_CLI_PATH" ...`, PowerShell
 `& $env:MULTICA_CLI_PATH ...`. Explicitly nested login shells may reorder PATH;
 keep using the paired executable there. Managed Codex tools use non-login shells.
 
-When an agent has a ready memory binding, each new task receives relevant
-history from that memory and its explicitly bound assets in its per-turn context. Treat those memories as
+When an agent has a ready memory binding, each execution receives a fresh context
+from AgentMemory's original injectors: L3 long-term memory, an L2 scene index,
+and bound Skill/Wiki/CodeGraph catalogs. L1 is searched and L0 history is read on demand. Treat memories as
 past evidence: check that they still apply and follow the current task's instructions.
 For additional context, run `multica knowledge search "<question or keywords>"`.
 It retrieves Chat Memory, Skill, Wiki and CodeGraph using their native engines.
@@ -352,6 +353,8 @@ ID, page reference or source task ID. Use `multica knowledge list` for available
 assets and processing status (paginate with `--limit` and `--offset`). Read full
 Skills with `multica knowledge read <asset-id>`, Wiki pages with `--ref <page-ref>`,
 code symbols with `--query <symbol>`, and Chat Memory with `--layer L0|L1|L2|L3`.
+Read an indexed L2 scene with `--layer L2 --ref <scene-path>`.
+Changing memory bindings or accessible assets starts a fresh provider session.
 Omitting a Wiki reference lists its pages; omitting a code query reads graph status.
 Task credentials always use their own agent's bound memory and workspace.
 Caller-supplied agent/team IDs cannot select another agent's memory.

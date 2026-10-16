@@ -158,7 +158,7 @@ func (s *Service) process(ctx context.Context, job db.KnowledgeExtraction) (stri
 			input := scope.Fields()
 			input["session_id"], input["task_id"] = payload.SessionID, payload.SessionID
 			input["idempotency_key"] = fmt.Sprintf("%s:%d", payload.SessionID, offset)
-			input["messages"], input["defer_pipeline"] = payload.Messages[offset:end], end < len(payload.Messages)
+			input["messages"], input["defer_pipeline"] = conversationMessages(payload.Messages[offset:end]), end < len(payload.Messages)
 			if err = s.Client.Call(ctx, scope.InstanceID, "/v3/conversation/add", "", input, nil); err != nil {
 				return "", receipt, 0, err
 			}
@@ -182,7 +182,7 @@ func (s *Service) process(ctx context.Context, job db.KnowledgeExtraction) (stri
 		final["session_id"], final["task_id"] = payload.SessionID, payload.SessionID
 		offset := ((len(payload.Messages) - 1) / 100) * 100
 		final["idempotency_key"] = fmt.Sprintf("%s:%d", payload.SessionID, offset)
-		final["messages"] = payload.Messages[offset:]
+		final["messages"] = conversationMessages(payload.Messages[offset:])
 		if err := s.Client.Call(ctx, scope.InstanceID, "/v3/conversation/add", "", final, nil); err != nil {
 			return "", receipt, 0, err
 		}
@@ -378,4 +378,18 @@ func (s *Service) collect(ctx context.Context, job db.KnowledgeExtraction) (sour
 	}
 	payload.SkillBatchEnds = append(payload.SkillBatchEnds, len(payload.Messages))
 	return payload, false, nil
+}
+
+// L0 accepts user/assistant only. Preserve tool evidence as attributed text;
+// Skill extraction still receives the original immutable tool roles.
+func conversationMessages(source []Message) []Message {
+	messages := make([]Message, len(source))
+	copy(messages, source)
+	for i := range messages {
+		if messages[i].Role == "tool_call" || messages[i].Role == "tool_result" {
+			messages[i].Content = "[Execution " + messages[i].Role + "]\n" + messages[i].Content
+			messages[i].Role = "assistant"
+		}
+	}
+	return messages
 }

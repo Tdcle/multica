@@ -356,6 +356,7 @@ type AgentTaskResponse struct {
 	WorkspaceContext   string `json:"workspace_context,omitempty"`
 	KnowledgeAvailable bool   `json:"knowledge_available,omitempty"`
 	KnowledgeContext   string `json:"knowledge_context,omitempty"`
+	KnowledgeScope     string `json:"knowledge_scope,omitempty"`
 	// IssueStatuses is the workspace's ACTIVE CUSTOM status catalog (MUL-6460),
 	// injected into the agent brief so agents can see and use statuses beyond
 	// the seven built-ins. Built-ins are omitted: their keys, names, and

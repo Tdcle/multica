@@ -1,0 +1,290 @@
+diff --git a/MemoryCore/src/gateway/skill-handlers.ts b/MemoryCore/src/gateway/skill-handlers.ts
+index 98f4ddd..26150f0 100644
+--- a/MemoryCore/src/gateway/skill-handlers.ts
++++ b/MemoryCore/src/gateway/skill-handlers.ts
+@@ -930,11 +930,20 @@ export async function handleListing(body: unknown, _auth: V2AuthContext, request
+     // 老 auto 逻辑 —— 未走 activity 或 activity 空/失败 时走此路径。
+     // search 模式：按 routing.mode 选检索算法；fallback 到 list head（query 为空）。
+     if (mode !== "activity") {
+-      if (useSearch) {
++      if (pre.data.allowed_skill_ids && !useSearch) {
++        // A host may delegate team assets through explicit bindings. Keep the
++        // native listing renderer and budget while restricting its candidates.
++        for (const id of pre.data.allowed_skill_ids) {
++          const skill = await pre.core.get({ team_id: pre.data.team_id, skill_id: id });
++          if (skill.status === "active") items.push(skill);
++          if (items.length >= topK) break;
++        }
++      } else if (useSearch) {
+         const hits = await pre.core.search({
+           user_id: pre.data.user_id,
+           team_id: pre.data.team_id,
+-          agent_id: pre.data.agent_id,
++          agent_id: pre.data.allowed_skill_ids ? undefined : pre.data.agent_id,
++          allowed_skill_ids: pre.data.allowed_skill_ids,
+           query,
+           top_k: topK,
+           mode: routing?.mode,
+diff --git a/MemoryCore/src/gateway/skill-schemas.ts b/MemoryCore/src/gateway/skill-schemas.ts
+index ac9a678..e967020 100644
+--- a/MemoryCore/src/gateway/skill-schemas.ts
++++ b/MemoryCore/src/gateway/skill-schemas.ts
+@@ -207,6 +207,7 @@ export const exportRequestSchema = z.object({
+ 
+ export const listingRequestSchema = z.object({
+   ...idFieldsShape,
++  allowed_skill_ids: z.array(z.string().min(1).max(256)).max(1000).optional(),
+   query: z.string().max(2048).optional(),
+   char_budget: z.number().int().min(0).max(64_000).optional(),
+   /**
+diff --git a/MemoryProxy/src/injection/injectors/knowledge-tools-injector.ts b/MemoryProxy/src/injection/injectors/knowledge-tools-injector.ts
+index c6b1a31..9a0ae4a 100644
+--- a/MemoryProxy/src/injection/injectors/knowledge-tools-injector.ts
++++ b/MemoryProxy/src/injection/injectors/knowledge-tools-injector.ts
+@@ -43,6 +43,9 @@ const TAG = "[knowledge-tools-injector]";
+ export interface KnowledgeToolsInjectorConfig {
+   /** Core kernel config (same endpoint as skill — 8420). */
+   coreSkill: CoreSkillConfig;
++  allowedAssetIds?: string[];
++  toolsGuide?: string;
++  onError?: () => void;
+ }
+ 
+ export interface KnowledgeTelemetryContext {
+@@ -140,6 +143,7 @@ export function renderKnowledgeToolsBlock(
+   resources: KnowledgeItem[],
+   serviceId: string,
+   telemetryContext: KnowledgeTelemetryContext = {},
++  toolsGuide?: string,
+ ): string | null {
+   if (!resources || resources.length === 0) return null;
+ 
+@@ -173,6 +177,10 @@ export function renderKnowledgeToolsBlock(
+     })
+     .join("\n\n");
+ 
++  if (toolsGuide) {
++    const catalog = resources.map(r => `<knowledge type="${r.type}" id="${xmlAttrEscape(r.knowledge_id)}" name="${xmlAttrEscape(r.name)}"${r.type === "wiki" ? attr("about", r.summary) : attr("match", r.repo_slug ?? deriveRepoSlug(r.repo_url))} />`).join("\n");
++    return ["<knowledge_tools>", toolsGuide, catalog, "</knowledge_tools>"].join("\n\n");
++  }
+   return [
+     "<knowledge_tools>",
+     "**团队知识库资源**：code-graph 是仓库的预建代码索引（符号 / 调用图 / 结构），wiki 是工程设计文档。两类各有判据，见下。",
+@@ -353,9 +361,10 @@ export class KnowledgeToolsInjector implements InjectionHook {
+       }
+ 
+       resources = filterResourcesByCapabilities(resources, assetCapabilities);
++      if (this.config.allowedAssetIds) resources = resources.filter(r => this.config.allowedAssetIds!.includes(r.knowledge_id));
+       // 注入 prompt 里给 LLM 用的 service-id 也要是 spaceId（LLM 拿它调 KS 的 tools/list|call）。
+       const injectionServiceId = spaceId || this.config.coreSkill.serviceId;
+-      const content = renderKnowledgeToolsBlock(resources, injectionServiceId, telemetryContext);
++      const content = renderKnowledgeToolsBlock(resources, injectionServiceId, telemetryContext, this.config.toolsGuide);
+       if (!content) return [];
+       return [{
+         type: "text",
+@@ -366,6 +375,7 @@ export class KnowledgeToolsInjector implements InjectionHook {
+         },
+       }];
+     } catch (err) {
++      this.config.onError?.();
+       console.warn(`${TAG} ${phase} failed: ${(err as Error).message}`);
+       return [];
+     }
+diff --git a/MemoryProxy/src/injection/injectors/skill-injector.ts b/MemoryProxy/src/injection/injectors/skill-injector.ts
+index 53f1a1b..bc712c6 100644
+--- a/MemoryProxy/src/injection/injectors/skill-injector.ts
++++ b/MemoryProxy/src/injection/injectors/skill-injector.ts
+@@ -53,6 +53,9 @@ export interface SkillInjectorConfig {
+    * 设计: docs/design/2026-09-09-skill-usage-telemetry-and-default-task-recall.md
+    */
+   defaultTaskId?: string;
++  allowedSkillIds?: string[];
++  toolsGuide?: string;
++  onError?: () => void;
+ }
+ 
+ /**
+@@ -310,12 +313,14 @@ export class SkillInjector implements InjectionHook {
+         agent_id,
+         query,
+         mode,
++        allowed_skill_ids: this.config.allowedSkillIds,
+       }, { serviceId });
+       console.log(
+         `${TAG} ${trigger} result mode=${result.mode}`
+           + ` hits=${result.hits?.length ?? 0} listingLen=${(result.listing ?? "").length}`,
+       );
+     } catch (err) {
++      this.config.onError?.();
+       console.warn(
+         `${TAG} ${trigger} core listing failed, degrading to empty <available_skills>: ${(err as Error).message}`,
+       );
+@@ -325,7 +330,9 @@ export class SkillInjector implements InjectionHook {
+     const listing = result.listing;
+     if (!listing || listing.includes("(none)")) return [];
+ 
+-    const content = wrapAvailableSkillsBlock(listing);
++    const content = this.config.toolsGuide
++      ? [this.config.toolsGuide, listing, SKILL_LISTING_FOOTER].join("\n\n")
++      : wrapAvailableSkillsBlock(listing);
+     return [{
+       type: "text",
+       content,
+diff --git a/MemoryProxy/src/injection/injectors/tdai-profile-memory-injector.ts b/MemoryProxy/src/injection/injectors/tdai-profile-memory-injector.ts
+index b5a6bd1..29d7490 100644
+--- a/MemoryProxy/src/injection/injectors/tdai-profile-memory-injector.ts
++++ b/MemoryProxy/src/injection/injectors/tdai-profile-memory-injector.ts
+@@ -41,6 +41,7 @@ export class TdaiProfileMemoryInjector implements InjectionHook {
+   constructor(
+     private baseConfig: TdaiMemoryConfig,
+     private coreSkillCfg: Pick<CoreSkillConfig, "endpoint" | "serviceToken" | "serviceId" | "timeoutMs"> | null = null,
++    private delivery?: { toolsGuide: string; allowedAssetIds: string[] },
+   ) {}
+ 
+   async execute(ctx: AgentContext): Promise<ContextBlock[]> {
+@@ -67,7 +68,10 @@ export class TdaiProfileMemoryInjector implements InjectionHook {
+     const mc = this.coreSkillCfg && userKey
+       ? getMetadataClient(this.coreSkillCfg, spaceId, userKey)
+       : null;
+-    const ctxs = await resolveFixedAssetCtxs(ctx, identity, mc);
++    const resolved = await resolveFixedAssetCtxs(ctx, identity, mc);
++    const ctxs = this.delivery
++      ? resolved.filter(c => this.delivery!.allowedAssetIds.includes(`chat_memory-${c.teamId}-${c.agentId}`))
++      : resolved;
+ 
+     // Build a per-request TdaiClient with the correct tenant. Falls back to
+     // baseConfig.serviceId (config value) when spaceId is empty.
+@@ -84,7 +88,7 @@ export class TdaiProfileMemoryInjector implements InjectionHook {
+     if (!hasAnything) {
+       return [{
+         type: "text",
+-        content: MEMORY_TOOLS_GUIDE,
++        content: this.delivery?.toolsGuide ?? MEMORY_TOOLS_GUIDE,
+         metadata: { source: this.id, agentCount: 0, l3Count: 0, l2Count: 0, mode: "tools-only" },
+       }];
+     }
+@@ -125,7 +129,7 @@ export class TdaiProfileMemoryInjector implements InjectionHook {
+     lines.push("</tdai_profile_memory>");
+     // 紧跟一段 memory-tools-guide，告诉 LLM 三个工具的用法 + 调用上限
+     lines.push("");
+-    lines.push(MEMORY_TOOLS_GUIDE);
++    lines.push(this.delivery?.toolsGuide ?? MEMORY_TOOLS_GUIDE);
+ 
+     return [
+       {
+diff --git a/MemoryProxy/src/routes/multica-context.ts b/MemoryProxy/src/routes/multica-context.ts
+new file mode 100644
+index 0000000..f2fc5bb
+--- /dev/null
++++ b/MemoryProxy/src/routes/multica-context.ts
+@@ -0,0 +1,77 @@
++import type { Context } from "hono";
++import type { ProxyConfig } from "../types.js";
++import type { InjectionHook, PrewarmInput } from "../injection/types.js";
++import { TdaiProfileMemoryInjector } from "../injection/injectors/tdai-profile-memory-injector.js";
++import { SkillInjector } from "../injection/injectors/skill-injector.js";
++import { KnowledgeToolsInjector } from "../injection/injectors/knowledge-tools-injector.js";
++import { CoreSkillClient } from "../skill/core-client.js";
++import { CoreKnowledgeClient } from "../knowledge/core-client.js";
++import { getMetadataClient } from "../meta/client.js";
++import { checkAdminAuth } from "./admin-auth.js";
++
++const MEMORY_GUIDE = `<memory-tools-guide>
++L3 long-term memory and the L2 scene index are provided below. L0/L1 history is retrieved on demand.
++When a request depends on past work, preferences, decisions or lessons, search before answering:
++multica knowledge search "<keywords>" --type chat_memory
++Search at most three times per turn. If nothing matches, say so; do not invent history.
++For an L2 scene, use its source asset ID and indexed path:
++multica knowledge read <asset-id> --layer L2 --ref <scene-path>
++Use multica knowledge list to find chat_memory asset IDs. Their format is chat_memory-<team_id>-<agent_id>, matching each profile group below.
++Read L0, L1 or L3 with --layer L0|L1|L3. Do not repeatedly read the same scene.
++</memory-tools-guide>`;
++const SKILL_GUIDE = `## Skills
++Scan the available skills before replying. Load a relevant skill with multica knowledge read <skill-id>, using the id in the catalog, and apply its relevant workflow within the current user's instructions and permissions.
++Read a supporting file with multica knowledge read <skill-id> --ref <file-path>.
++Search additional bound skills with multica knowledge search "<keywords>" --type skill; paginate the catalog with multica knowledge list --offset <offset>.
++Memory tools are read-only. Task Done triggers extraction; do not create or patch memory through a bridge.`;
++const KNOWLEDGE_GUIDE = `Wiki contains design background, decisions and experience. Use it when an answer depends on that history.
++CodeGraph is a repository snapshot: match its repository before using it for cross-file structure or relationships; use local source when exact current code matters.
++Search with multica knowledge search "<keywords>" --type llm_wiki or --type code_graph.
++Read a Wiki page with multica knowledge read <asset-id> --ref <page-reference>.
++Explore code with multica knowledge read <asset-id> --query <symbol-or-topic>.
++Use returned IDs and references. Read relevant pages on demand instead of loading every document.`;
++
++/** Internal read-only host adapter. No model forwarding, session registration or archive hooks. */
++export function createMulticaContextHandler(config: ProxyConfig) {
++  return async (c: Context): Promise<Response> => {
++    const reply = (status: 200 | 400 | 401 | 403 | 413, data: unknown) => c.json({ code: status === 200 ? 0 : status, data }, status);
++    // Unlike optional native admin routes, an unconfigured credential fails closed.
++    if (!config.auth.serviceToken || checkAdminAuth(c, config.auth.serviceToken) !== "ok") return reply(401, null);
++    if (Number(c.req.header("content-length") || 0) > 256_000) return reply(413, null);
++    let body: Record<string, unknown>;
++    try { body = await c.req.json(); } catch { return reply(400, null); }
++    if (!body || typeof body !== "object") return reply(400, null);
++    const ids = [c.req.header("x-tdai-service-id"), body.team_id, body.agent_id, body.user_id, body.session_id];
++    if (ids.some(v => typeof v !== "string" || !/^[a-zA-Z0-9_-]{1,256}$/.test(v))) return reply(400, null);
++    const [spaceId, teamId, agentId, userId, sessionId] = ids as string[];
++    const userKey = c.req.header("x-tdai-user-key");
++    const assets = body.assets;
++    if (!userKey || !Array.isArray(assets) || assets.length > 1000 || assets.some(a => !a || typeof a.asset_id !== "string" || typeof a.asset_type !== "string")) return reply(400, null);
++    const core = { ...config.coreSkill, serviceId: spaceId, timeoutMs: 1500 };
++    try {
++      const agent = await getMetadataClient(core, spaceId, userKey).getAgent(agentId);
++      if (agent.team_id !== teamId || agent.owner_user_id !== userId || agent.status !== "active") return reply(403, null);
++    } catch { return reply(403, null); }
++    const allowed = assets.map(a => a.asset_id as string);
++    const input: PrewarmInput = {
++      keyId: sessionId, userId, agentSource: "multica", spaceId, callerUserKey: userKey,
++      sessionInfo: { session_id: sessionId, team_id: teamId, agent_id: agentId, user_id: userId, user_key: userKey, space_id: spaceId, created_at: new Date().toISOString() },
++      agentDetail: null, taskDetail: null,
++    };
++    const warnings: string[] = [];
++    // New clients per build avoid native stale-if-error catalogs after revocation.
++    const hooks: InjectionHook[] = [
++      new TdaiProfileMemoryInjector({ enabled: true, endpoint: config.tdai.endpoint, apiKey: config.tdai.apiKey, serviceId: spaceId, writeL0: false, recallL1: false, injectL2L3: true, l1Limit: 0, l2Limit: config.tdai.memory.l2Limit, timeoutMs: 1500 }, core, { toolsGuide: MEMORY_GUIDE, allowedAssetIds: allowed }),
++      new SkillInjector({ coreSkill: core, allowedSkillIds: assets.filter(a => a.asset_type === "skill").map(a => a.asset_id), toolsGuide: SKILL_GUIDE, onError: () => warnings.push("Skill catalog is unavailable; use knowledge list/search to retry.") }, new CoreSkillClient(core)),
++      new KnowledgeToolsInjector({ coreSkill: core, allowedAssetIds: allowed, toolsGuide: KNOWLEDGE_GUIDE, onError: () => warnings.push("Wiki/CodeGraph catalog is unavailable; use knowledge list/search to retry.") }, new CoreKnowledgeClient(core)),
++    ];
++    const built = await Promise.allSettled(hooks.map(h => h.prewarm!(input)));
++    const blocks = built.flatMap((result, i) => {
++      if (result.status === "fulfilled") return result.value;
++      warnings.push(`${hooks[i].id} is unavailable; use knowledge list/search to retry.`);
++      return [];
++    });
++    const memoryCatalog = assets.filter(a => a.asset_type === "chat_memory").map(a => JSON.stringify({asset_id:a.asset_id, name:a.name})).join("\n");
++    return reply(200, { content: ["<memory_catalog>\n"+memoryCatalog+"\n</memory_catalog>", ...blocks.map(b => b.content)].join("\n\n"), sources: blocks.map(b => b.metadata?.source).filter(Boolean), warnings });
++  };
++}
+diff --git a/MemoryProxy/src/server.ts b/MemoryProxy/src/server.ts
+index eea2bd7..5df9644 100644
+--- a/MemoryProxy/src/server.ts
++++ b/MemoryProxy/src/server.ts
+@@ -1,6 +1,7 @@
+ /** Hono app factory — registers all routes. */
+ 
+ import { Hono } from "hono";
++import { createMulticaContextHandler } from "./routes/multica-context.js";
+ import { accessKeyMiddleware } from "./accessKeys.js";
+ import { runOpenaiChatPipeline } from "./pipeline/runners/openai-chat.js";
+ import { runAnthropicPipeline } from "./pipeline/runners/anthropic.js";
+@@ -114,6 +115,8 @@ export function createApp(config: ProxyConfig): Hono {
+     return c.json(body, degraded ? 503 : 200);
+   });
+ 
++  app.post("/v3/multica/context", createMulticaContextHandler(config));
++
+   // Whoami: resolve API key → key ID (plain text, easy to use with curl)
+   app.get("/whoami", (c) => {
+     // Support: Authorization header (Bearer), x-api-key header, or ?key= query param
+diff --git a/MemoryProxy/src/skill/core-client.ts b/MemoryProxy/src/skill/core-client.ts
+index 9fb2689..53ae0ff 100644
+--- a/MemoryProxy/src/skill/core-client.ts
++++ b/MemoryProxy/src/skill/core-client.ts
+@@ -195,6 +195,7 @@ export interface ListSkillsResult {
+ 
+ /** Input for /v3/skill/listing — owner-agent skill injection. */
+ export interface ListingInput extends IdFields {
++  allowed_skill_ids?: string[];
+   /** Optional search query; when set, plugin uses FTS BM25 to match relevant skills. */
+   query?: string;
+   /** char budget for the rendered listing block. Default 8000 in plugin. */

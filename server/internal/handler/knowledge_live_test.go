@@ -133,6 +133,7 @@ func TestKnowledgeLiveDoneToAgentClaim(t *testing.T) {
 		case <-time.After(3 * time.Second):
 		}
 	}
+	t.Logf("Done extraction ready: %s", uuidToString(sourceJob.ID))
 	runtimeID := dbfx.Runtime(t, "Knowledge recall runtime")
 	agentID := dbfx.Agent(t, "Knowledge recall agent", runtimeID)
 	if agentID == sourceAgentID {
@@ -154,7 +155,7 @@ func TestKnowledgeLiveDoneToAgentClaim(t *testing.T) {
 		return *response.Task
 	}
 	isolated := claim()
-	if strings.Contains(isolated.KnowledgeContext, "multica-"+uuidToString(sourceJob.ID)) {
+	if strings.Contains(isolated.KnowledgeContext, binding.MemoryAgentID) {
 		t.Fatal("another agent received private memory")
 	}
 	foreignAsset := "chat_memory-" + binding.TeamID + "-" + binding.MemoryAgentID
@@ -179,7 +180,7 @@ func TestKnowledgeLiveDoneToAgentClaim(t *testing.T) {
 	}
 	taskID = dbfx.Task(t, agentID, testutil.Cols{"issue_id": issueID, "runtime_id": runtimeID})
 	claimed := claim()
-	if claimed.ID != taskID || !claimed.KnowledgeAvailable || !strings.Contains(claimed.KnowledgeContext, "multica-"+uuidToString(sourceJob.ID)) {
+	if claimed.ID != taskID || !claimed.KnowledgeAvailable || !strings.Contains(claimed.KnowledgeContext, foreignAsset) {
 		t.Fatalf("claim omitted historical source memory: task=%s knowledge=%s", claimed.ID, claimed.KnowledgeContext)
 	}
 	// Prove the daemon renders the same claimed context in the turn prompt.
