@@ -1,0 +1,509 @@
+diff --git a/MemoryPanel/web/src/lib/multica-view-state.ts b/MemoryPanel/web/src/lib/multica-view-state.ts
+new file mode 100644
+index 0000000..6817907
+--- /dev/null
++++ b/MemoryPanel/web/src/lib/multica-view-state.ts
+@@ -0,0 +1,96 @@
++import { useLayoutEffect, useState } from 'react';
++import { multicaEmbed } from './multicaEmbed';
++
++type Value = string | number | boolean | null;
++const saved = multicaEmbed?.view_state;
++const values: Record<string, Value> = saved?.values ?? {};
++let scroll = saved?.scroll ?? {};
++let route = location.hash.slice(1);
++let restoring = !!saved;
++let cancelRestore = () => {};
++
++function publish() {
++  if (!multicaEmbed) return;
++  window.parent.postMessage({ type: 'multica-memory-position-write',
++    position: JSON.stringify({ route, values, scroll }) }, '*');
++}
++
++// Only explicitly opted-in navigation primitives cross the sandbox boundary.
++// Credentials, fetched content, edit drafts and open dialogs remain private.
++export function useMulticaViewState<T extends Value>(key: string, initial: T) {
++  const [value, setValue] = useState<T>(() => {
++    const previous = values[key];
++    return multicaEmbed && (initial === null ? (previous === null || typeof previous === 'string') : typeof previous === typeof initial)
++      && previous !== undefined ? previous as T : initial;
++  });
++  useLayoutEffect(() => {
++    if (!multicaEmbed) return;
++    values[key] = value;
++    publish();
++  }, [key, value]);
++  return [value, setValue] as const;
++}
++
++export function recordMulticaRoute(path: string) {
++  if (!multicaEmbed || route === path) return;
++  cancelRestore();
++  route = path;
++  scroll = {};
++  restoring = false;
++  publish();
++}
++
++if (multicaEmbed) {
++  // A stable CSS path identifies independently scrolling panes, including lists
++  // and document bodies. Offsets are scoped to the currently restored route.
++  const selector = (element: Element) => {
++    const parts: string[] = [];
++    for (let node: Element | null = element; node && node !== document.body; node = node.parentElement) {
++      const siblings = node.parentElement ? Array.from(node.parentElement.children).filter(e => e.tagName === node!.tagName) : [];
++      parts.unshift(`${node.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(node) + 1})`);
++    }
++    for (const name of element.classList) {
++      if (!name.startsWith('_')) continue;
++      const candidate = '.' + CSS.escape(name);
++      if (document.querySelectorAll(candidate).length === 1) return candidate;
++    }
++    return 'body > ' + parts.join(' > ');
++  };
++
++  document.addEventListener('scroll', event => {
++    if (restoring) return;
++    const element = event.target === document ? document.scrollingElement : event.target;
++    if (!(element instanceof HTMLElement)) return;
++    const key = element === document.scrollingElement ? ':root' : selector(element);
++    scroll[key] = { top: element.scrollTop, left: element.scrollLeft };
++    publish();
++  }, true);
++  if (saved) {
++    const pending = new Map(Object.entries(scroll));
++    const stop = () => {
++      restoring = false; observer.disconnect(); clearTimeout(timeout);
++      for (const event of ['pointerdown', 'wheel', 'keydown']) window.removeEventListener(event, stop);
++    };
++    cancelRestore = stop;
++    const restore = () => {
++      for (const [key, offset] of pending) {
++        let element: Element | null;
++        try { element = key === ':root' ? document.scrollingElement : document.querySelector(key); }
++        catch { pending.delete(key); continue; }
++        if (!(element instanceof HTMLElement) || !Number.isFinite(offset.top) || !Number.isFinite(offset.left)) continue;
++        if (element.scrollHeight - element.clientHeight < offset.top || element.scrollWidth - element.clientWidth < offset.left) continue;
++        element.scrollTop = offset.top;
++        element.scrollLeft = offset.left;
++        pending.delete(key);
++      }
++      if (!pending.size) stop();
++    };
++    // Content loads asynchronously; retry on actual DOM changes, bounded to
++    // ten seconds. User input always takes precedence over a pending restore.
++    const observer = new MutationObserver(restore);
++    observer.observe(document.body, { subtree: true, childList: true, attributes: true });
++    const timeout = setTimeout(stop, 10_000);
++    for (const event of ['pointerdown', 'wheel', 'keydown']) window.addEventListener(event, stop, { once: true });
++    restore();
++  }
++}
+diff --git a/MemoryPanel/web/src/lib/multicaEmbed.ts b/MemoryPanel/web/src/lib/multicaEmbed.ts
+index c392faa..0f5fdf8 100644
+--- a/MemoryPanel/web/src/lib/multicaEmbed.ts
++++ b/MemoryPanel/web/src/lib/multicaEmbed.ts
+@@ -1,7 +1,7 @@
+ // Set by the authenticated embedding bootstrap before loading the panel.
+ declare global {
+   interface Window {
+-    __MULTICA_PANEL_CONTEXT__?: { can_manage_space: boolean };
++    __MULTICA_PANEL_CONTEXT__?: { can_manage_space: boolean; view_state?: { route: string; values: Record<string, string | number | boolean | null>; scroll: Record<string, { top: number; left: number }> } };
+   }
+ }
+ 
+diff --git a/MemoryPanel/web/src/main.tsx b/MemoryPanel/web/src/main.tsx
+index ea483f9..fa67170 100644
+--- a/MemoryPanel/web/src/main.tsx
++++ b/MemoryPanel/web/src/main.tsx
+@@ -13,6 +13,7 @@ import '@fontsource-variable/inter/wght-italic.css';
+ import '@fontsource-variable/geist-mono/wght.css';
+ import './multica-theme.css';
+ import './lib/multica-appearance';
++import './lib/multica-view-state';
+ 
+ // WOA SSO 认证后会把授权码挂在站点地址上（?code=...&state=...）跳回。
+ // 会话已由后端 Cookie 建立，前端无需该参数，登录完成后清理地址栏，避免 code 残留/被复制分享。
+diff --git a/MemoryPanel/web/src/pages/ChatMemoryPage/hooks/useChatMemory.ts b/MemoryPanel/web/src/pages/ChatMemoryPage/hooks/useChatMemory.ts
+index 30516ee..a817d63 100644
+--- a/MemoryPanel/web/src/pages/ChatMemoryPage/hooks/useChatMemory.ts
++++ b/MemoryPanel/web/src/pages/ChatMemoryPage/hooks/useChatMemory.ts
+@@ -1,3 +1,4 @@
++import { useMulticaViewState } from '@/lib/multica-view-state';
+ /**
+  * useChatMemory —— Chat Memory 页的全部状态与数据逻辑。
+  * 组件层只保留 JSX 渲染，状态 / 数据逻辑集中在此。
+@@ -27,16 +28,16 @@ export function useChatMemory(props: { activeTeamId?: string | null } = {}) {
+   const { activeTeamId: storeActiveTeamId, activeTeam } = useTeams();
+   const currentUserId = auth?.user_id ?? '';
+   const activeTeamId = props.activeTeamId ?? storeActiveTeamId;
+-  const { agents: teamAgents } = useAgents(activeTeamId);
++  const { agents: teamAgents, loading: agentsLoading } = useAgents(activeTeamId);
+   const ownedTeamAgents = useMemo(
+     () => teamAgents.filter((a) => a.owner_user_id === currentUserId),
+     [teamAgents, currentUserId],
+   );
+ 
+   const [blocks, setBlocks] = useState<MemoryBlock[]>([]);
+-  const [blocksLoading, setBlocksLoading] = useState(false);
+-  const [selectedId, setSelectedId] = useState<string | null>(null);
+-  const [layer, setLayer] = useState<MemoryLayer>('L1');
++  const [blocksLoading, setBlocksLoading] = useState(true);
++  const [selectedId, setSelectedId] = useMulticaViewState<string | null>('memory.selectedId', null);
++  const [layer, setLayer] = useMulticaViewState<MemoryLayer>('memory.layer', 'L1');
+   const [layerPages, setLayerPages] = useState<
+     Record<string, Partial<Record<MemoryLayer, number>>>
+   >({});
+@@ -57,10 +58,11 @@ export function useChatMemory(props: { activeTeamId?: string | null } = {}) {
+   const [showImport, setShowImport] = useState(false);
+   const [showAllocate, setShowAllocate] = useState(false);
+   // 默认展示 Agent 资产（fixed），避免用户误以为自己的资产在「团队资产」里
+-  const [scopeTab, setScopeTab] = useState<ScopeTab>('fixed');
+-  const [agentFilter, setAgentFilter] = useState<string>('');
++  const [scopeTab, setScopeTab] = useMulticaViewState<ScopeTab>('memory.scopeTab', 'fixed');
++  const [agentFilter, setAgentFilter] = useMulticaViewState<string>('memory.agentFilter', '');
+ 
+   useEffect(() => {
++    if (!activeTeamId || agentsLoading) return;
+     if (ownedTeamAgents.length === 0) {
+       setAgentFilter('');
+       return;
+@@ -68,7 +70,7 @@ export function useChatMemory(props: { activeTeamId?: string | null } = {}) {
+     if (!agentFilter || !ownedTeamAgents.some((a) => a.agent_id === agentFilter)) {
+       setAgentFilter(ownedTeamAgents[0].agent_id);
+     }
+-  }, [ownedTeamAgents, agentFilter]);
++  }, [ownedTeamAgents, agentFilter, agentsLoading, activeTeamId]);
+ 
+   // ── 数据加载 ──
+   // 请求序号防竞态：快速切换 tab 时，先发的请求可能后返回，
+@@ -154,6 +156,7 @@ export function useChatMemory(props: { activeTeamId?: string | null } = {}) {
+     // agent 无关。若把 agentFilter 纳入 team 的 key，ownedTeamAgents 异步加载完后
+     // agentFilter 会从 '' 变成首个 agent，导致 key 变化、再触发一次**完全重复**的
+     // teamAssets 请求（进页面即多打一次接口）。
++    if (!activeTeamId || agentsLoading) return;
+     const key =
+       scopeTab === 'fixed'
+         ? `${activeTeamId}|${scopeTab}|${agentFilter}`
+@@ -161,15 +164,16 @@ export function useChatMemory(props: { activeTeamId?: string | null } = {}) {
+     if (fetchKeyRef.current === key) return;
+     fetchKeyRef.current = key;
+     void fetchBlocks();
+-  }, [activeTeamId, scopeTab, agentFilter, fetchBlocks]);
++  }, [activeTeamId, scopeTab, agentFilter, fetchBlocks, agentsLoading]);
+ 
+   // 列表变化后，仅当当前选中的记忆块已不在列表中时清空选中。
+   // 进入页面不自动选中第一个（与 skill 行为保持一致），由用户点击后再加载详情。
+   useEffect(() => {
++    if (!activeTeamId || blocksLoading || agentsLoading) return;
+     if (selectedId && !blocks.some((b) => b.id === selectedId)) {
+       setSelectedId(null);
+     }
+-  }, [blocks, selectedId]);
++  }, [blocks, selectedId, blocksLoading, agentsLoading, activeTeamId]);
+ 
+   // ── 层分页加载 ──
+   const selected = useMemo(
+diff --git a/MemoryPanel/web/src/pages/CodePage/hooks/useCodeSources.ts b/MemoryPanel/web/src/pages/CodePage/hooks/useCodeSources.ts
+index be03728..f93725e 100644
+--- a/MemoryPanel/web/src/pages/CodePage/hooks/useCodeSources.ts
++++ b/MemoryPanel/web/src/pages/CodePage/hooks/useCodeSources.ts
+@@ -1,3 +1,4 @@
++import { useMulticaViewState } from '@/lib/multica-view-state';
+ /**
+  * useCodeSources —— Code 资产页的全部状态与数据逻辑。
+  * 组件层只保留 JSX 渲染，状态 / 数据逻辑集中在此。
+@@ -19,15 +20,15 @@ export function useCodeSources() {
+   const [sources, setSources] = useState<CodeGraphDetail[]>([]);
+   const [loading, setLoading] = useState(false);
+   // 默认展示 Agent 资产（fixed），避免用户误以为自己的资产在「团队资产」里
+-  const [scopeTab, setScopeTab] = useState<ScopeTab>('fixed');
+-  const [keyword, setKeyword] = useState('');
+-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+-  const [viewMode, setViewMode] = useState<ViewMode>('card');
++  const [scopeTab, setScopeTab] = useMulticaViewState<ScopeTab>('code.scopeTab', 'fixed');
++  const [keyword, setKeyword] = useMulticaViewState<string>('code.keyword', '');
++  const [statusFilter, setStatusFilter] = useMulticaViewState<StatusFilter>('code.statusFilter', 'all');
++  const [viewMode, setViewMode] = useMulticaViewState<ViewMode>('code.viewMode', 'card');
+   const [inFlight, setInFlight] = useState<CodeGraphDetail[]>([]);
+ 
+   // Detail view state
+-  const [subView, setSubView] = useState<SubView>('list');
+-  const [selectedCgId, setSelectedCgId] = useState('');
++  const [subView, setSubView] = useMulticaViewState<SubView>('code.subView', 'list');
++  const [selectedCgId, setSelectedCgId] = useMulticaViewState<string>('code.selectedCgId', '');
+ 
+   // Register dialog state
+   const [showRegister, setShowRegister] = useState(false);
+@@ -67,7 +68,7 @@ export function useCodeSources() {
+   const currentUser = auth?.user_id ?? '';
+   // 固定资产 tab 只列自己 owner 的 agent（与 ChatMemory / Skills 面板一致，
+   // 也符合文档 §4.2 权限规则：agent-fixed 只允许查看 caller 自己 owner 的 agent）。
+-  const { agents: allAgents } = useAgents(activeTeamId);
++  const { agents: allAgents, loading: agentsLoading } = useAgents(activeTeamId);
+   const teamAgents = useMemo(
+     () =>
+       allAgents
+@@ -76,10 +77,11 @@ export function useCodeSources() {
+     [allAgents, currentUser],
+   );
+   // fixed tab 下选中的 agent_id
+-  const [agentFilter, setAgentFilter] = useState<string>('');
++  const [agentFilter, setAgentFilter] = useMulticaViewState<string>('code.agentFilter', '');
+   const [fixedBoundIds, setFixedBoundIds] = useState<Set<string>>(new Set());
+ 
+   useEffect(() => {
++    if (!activeTeamId || agentsLoading) return;
+     if (teamAgents.length === 0) {
+       setAgentFilter('');
+       return;
+@@ -87,7 +89,7 @@ export function useCodeSources() {
+     if (!agentFilter || !teamAgents.some((a) => a.id === agentFilter)) {
+       setAgentFilter(teamAgents[0].id);
+     }
+-  }, [teamAgents, agentFilter]);
++  }, [teamAgents, agentFilter, agentsLoading, activeTeamId]);
+ 
+   const fetchFixedBindings = useCallback(async () => {
+     if (!agentFilter) {
+diff --git a/MemoryPanel/web/src/pages/GuidePage/index.tsx b/MemoryPanel/web/src/pages/GuidePage/index.tsx
+index cd77186..a848c12 100644
+--- a/MemoryPanel/web/src/pages/GuidePage/index.tsx
++++ b/MemoryPanel/web/src/pages/GuidePage/index.tsx
+@@ -1,3 +1,4 @@
++import { useMulticaViewState } from '@/lib/multica-view-state';
+ /**
+  * GuidePage — 使用说明页（路由 /guide）
+  *
+@@ -268,15 +269,15 @@ export function GuidePage() {
+   const navigate = useNavigate();
+   const auth = useAuthStore((s) => s.auth);
+ 
+-  const [mainTab, setMainTab] = useState<MainTab>('quick');
++  const [mainTab, setMainTab] = useMulticaViewState<MainTab>('guide.mainTab', 'quick');
+   // 快速接入三步曲：下载配置包 → 接入 IDE → 导入历史数据。
+   // 默认定位第 1 步，步骤条引导用户一步步往下走。
+-  const [quickTab, setQuickTab] = useState<QuickTab>('download');
++  const [quickTab, setQuickTab] = useMulticaViewState<QuickTab>('guide.quickTab', 'download');
+   // 已走过的步骤（用于步骤条"已完成"态，让用户知道进度）
+   const [visitedSteps, setVisitedSteps] = useState<QuickTab[]>(['download']);
+-  const [practice, setPractice] = useState<PracticeId>('team');
+-  const [practiceStep, setPracticeStep] = useState(0);
+-  const [method, setMethod] = useState<'skill' | 'script'>('skill');
++  const [practice, setPractice] = useMulticaViewState<PracticeId>('guide.practice', 'team');
++  const [practiceStep, setPracticeStep] = useMulticaViewState<number>('guide.practiceStep', 0);
++  const [method, setMethod] = useMulticaViewState<'skill' | 'script'>('guide.method', 'skill');
+   const [proxyMode, setProxyMode] = useState<ProxyMode>('default');
+   const [proxyBase, setProxyBase] = useState('');
+   const [instanceId, setInstanceId] = useState('default');
+diff --git a/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts b/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts
+index e78bc91..b392a9d 100644
+--- a/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts
++++ b/MemoryPanel/web/src/pages/SkillsPage/hooks/useSkillsPanel.ts
+@@ -1,3 +1,4 @@
++import { useMulticaViewState } from '@/lib/multica-view-state';
+ /**
+  * useSkillsPanel —— Skills 页面的状态与数据逻辑。
+  * 组件层只保留 JSX 渲染，状态 / 数据逻辑集中在此。
+@@ -26,10 +27,10 @@ export const TAB_I18N_KEY: Record<Tab, string> = {
+ export function useSkillsPanel() {
+   const { t } = useTranslation();
+   // The shared team library is the default entry.
+-  const [tab, setTab] = useState<Tab>('team');
++  const [tab, setTab] = useMulticaViewState<Tab>('skills.tab', 'team');
+   const { activeTeamId, activeTeam } = useTeams();
+   const myUserId = getPanelSession()?.user?.user_id ?? '';
+-  const [selectedAgent, setSelectedAgent] = useState<string>('');
++  const [selectedAgent, setSelectedAgent] = useMulticaViewState<string>('skills.selectedAgent', '');
+   const [skills, setSkills] = useState<SkillSummary[]>([]);
+ 
+   // team 内 agent 数据 —— 一次全量拉取，前端派生两份，避免之前分别为
+@@ -81,8 +82,8 @@ export function useSkillsPanel() {
+     };
+   }, [activeTeamId, myUserId]);
+ 
+-  const [loading, setLoading] = useState(false);
+-  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
++  const [loading, setLoading] = useState(true);
++  const [selectedSkillId, setSelectedSkillId] = useMulticaViewState<string | null>('skills.selectedSkillId', null);
+   const [showImport, setShowImport] = useState(false);
+   const [deleteLoading, setDeleteLoading] = useState(false);
+   const [exportLoading, setExportLoading] = useState(false);
+@@ -223,6 +224,7 @@ export function useSkillsPanel() {
+   //   - 切换 team 后，老 selectedAgent 可能已不在新 team 内，需要重置；
+   //   - 首次渲染时也要给 selectedAgent 一个默认值。
+   useEffect(() => {
++    if (!activeTeamId || agentsLoading) return;
+     if (teamAgents.length === 0) {
+       if (selectedAgent) setSelectedAgent('');
+       return;
+@@ -230,7 +232,7 @@ export function useSkillsPanel() {
+     if (!selectedAgent || !teamAgents.some((a) => a.id === selectedAgent)) {
+       setSelectedAgent(teamAgents[0].id);
+     }
+-  }, [teamAgents, selectedAgent]);
++  }, [teamAgents, selectedAgent, agentsLoading, activeTeamId]);
+ 
+   // 触发 refresh：依赖原始参数 + refresh，并用 key 去重防止短时间内重复触发。
+   // 之前直接 `useEffect(() => refresh(), [refresh])` 会因 refresh 引用变化
+diff --git a/MemoryPanel/web/src/pages/WikiPage/hooks/useWikiSources.ts b/MemoryPanel/web/src/pages/WikiPage/hooks/useWikiSources.ts
+index d6d4b2d..e15407e 100644
+--- a/MemoryPanel/web/src/pages/WikiPage/hooks/useWikiSources.ts
++++ b/MemoryPanel/web/src/pages/WikiPage/hooks/useWikiSources.ts
+@@ -1,3 +1,4 @@
++import { useMulticaViewState } from '@/lib/multica-view-state';
+ /**
+  * useWikiSources —— Wiki 资产页的全部状态与数据逻辑。
+  * 组件层只保留 JSX 渲染，状态 / 数据逻辑集中在此。
+@@ -16,12 +17,12 @@ export function useWikiSources() {
+   const [sources, setSources] = useState<WikiDetail[]>([]);
+   const [loading, setLoading] = useState(false);
+   // 默认展示 Agent 资产（fixed），避免用户误以为自己的资产在「团队资产」里
+-  const [scopeTab, setScopeTab] = useState<WikiScopeTab>('fixed');
+-  const [keyword, setKeyword] = useState('');
+-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+-  const [viewMode, setViewMode] = useState<ViewMode>('card');
+-  const [subView, setSubView] = useState<SubView>('list');
+-  const [selectedWikiId, setSelectedWikiId] = useState('');
++  const [scopeTab, setScopeTab] = useMulticaViewState<WikiScopeTab>('wiki.scopeTab', 'fixed');
++  const [keyword, setKeyword] = useMulticaViewState<string>('wiki.keyword', '');
++  const [statusFilter, setStatusFilter] = useMulticaViewState<StatusFilter>('wiki.statusFilter', 'all');
++  const [viewMode, setViewMode] = useMulticaViewState<ViewMode>('wiki.viewMode', 'card');
++  const [subView, setSubView] = useMulticaViewState<SubView>('wiki.subView', 'list');
++  const [selectedWikiId, setSelectedWikiId] = useMulticaViewState<string>('wiki.selectedWikiId', '');
+ 
+   // Create wiki
+   const [showCreate, setShowCreate] = useState(false);
+@@ -41,7 +42,7 @@ export function useWikiSources() {
+   // 固定资产 tab 只列自己 owner 的 agent（与 ChatMemory / Skills 面板一致，
+   // 也符合文档 §4.2 权限规则：agent-fixed 只允许查看 caller 自己 owner 的 agent）。
+   // 之前用 readActiveTeamAgents 返回全量 team agent，导致用户能看到别人的 agent。
+-  const { agents: allAgents } = useAgents(activeTeamId);
++  const { agents: allAgents, loading: agentsLoading } = useAgents(activeTeamId);
+   const teamAgents = useMemo(
+     () =>
+       allAgents
+@@ -50,7 +51,7 @@ export function useWikiSources() {
+     [allAgents, currentUser],
+   );
+   // fixed tab 下选中的 agent_id
+-  const [agentFilter, setAgentFilter] = useState<string>('');
++  const [agentFilter, setAgentFilter] = useMulticaViewState<string>('wiki.agentFilter', '');
+ 
+   // ── 外部来源（iWiki 等）注册流程 ──
+   // '' = 本地上传（不走外部来源，直接上传文件）
+@@ -248,6 +249,7 @@ export function useWikiSources() {
+   };
+ 
+   useEffect(() => {
++    if (!activeTeamId || agentsLoading) return;
+     if (teamAgents.length === 0) {
+       setAgentFilter('');
+       return;
+@@ -255,7 +257,7 @@ export function useWikiSources() {
+     if (!agentFilter || !teamAgents.some((a) => a.id === agentFilter)) {
+       setAgentFilter(teamAgents[0].id);
+     }
+-  }, [teamAgents, agentFilter]);
++  }, [teamAgents, agentFilter, agentsLoading, activeTeamId]);
+ 
+   const fetchFixedBindings = useCallback(async () => {
+     if (!agentFilter) {
+@@ -333,14 +335,21 @@ export function useWikiSources() {
+   const [pendingTakeover, setPendingTakeover] = useState<Set<string>>(new Set());
+ 
+   // Detail view state（Wiki 详情：图谱 / 页面 / 搜索 Tab）
+-  const [activeTab, setActiveTab] = useState<DetailTab>('overview');
++  const [activeTab, setActiveTab] = useMulticaViewState<DetailTab>('wiki.activeTab', 'overview');
+   const [pages, setPages] = useState<WikiPage[]>([]);
+   const [graphData, setGraphData] = useState<GraphData | null>(null);
+   const [graphLoading, setGraphLoading] = useState(false);
+-  const [selectedPage, setSelectedPage] = useState<WikiPage | null>(null);
++  const [pageRef, setPageRef] = useMulticaViewState<string>('wiki.page', '');
++  const pendingPage = useRef(pageRef);
++  const [selectedPage, setSelectedPageState] = useState<WikiPage | null>(null);
++  const setSelectedPage = (page: WikiPage | null) => {
++    pendingPage.current = '';
++    setSelectedPageState(page);
++    setPageRef(page ? ((page as { id?: string }).id || page.path) : '');
++  };
+   const [readContent, setReadContent] = useState('');
+   const [readLoading, setReadLoading] = useState(false);
+-  const [pageTypeFilter, setPageTypeFilter] = useState('all');
++  const [pageTypeFilter, setPageTypeFilter] = useMulticaViewState<string>('wiki.pageTypeFilter', 'all');
+   const [searchQuery, setSearchQuery] = useState('');
+   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+   const [searching, setSearching] = useState(false);
+@@ -404,7 +413,9 @@ export function useWikiSources() {
+   const prevTeamIdRef = useRef(activeTeamId);
+   useEffect(() => {
+     if (prevTeamIdRef.current === activeTeamId) return;
++    const previousTeam = prevTeamIdRef.current;
+     prevTeamIdRef.current = activeTeamId;
++    if (!previousTeam) return;
+     setSubView('list');
+     setSelectedWikiId('');
+     setActiveTab('overview');
+@@ -442,6 +453,11 @@ export function useWikiSources() {
+     if (hadError) tea.notify.error(t('wiki.notify.loadDetailFailed'));
+   }, []);
+ 
++  // Re-fetch restored detail data under the fresh, permission-checked session.
++  useEffect(() => {
++    if (subView === 'detail' && selectedWikiId) void fetchDetail(selectedWikiId);
++  }, [subView, selectedWikiId, fetchDetail]);
++
+   const runningWikiKey = useMemo(
+     () =>
+       sources
+@@ -800,7 +816,6 @@ export function useWikiSources() {
+     setGraphData(null);
+     setReadContent('');
+     setSubView('detail');
+-    fetchDetail(wikiId);
+   };
+ 
+   const handleReadPage = async (page: WikiPage) => {
+@@ -824,6 +839,25 @@ export function useWikiSources() {
+     }
+   };
+ 
++  useEffect(() => {
++    const ref = pendingPage.current;
++    if (!ref || !selectedWikiId || subView !== 'detail') return;
++    const listed = pages.find(item => ((item as { id?: string }).id || item.path) === ref);
++    if (!listed && !ref.startsWith('raw/')) return;
++    pendingPage.current = '';
++    const page = listed ?? { path: ref, title: ref.slice(4), type: 'raw' } as WikiPage;
++    if (!ref.startsWith('raw/')) {
++      void handleReadPage(page);
++      return;
++    }
++    setSelectedPage(page);
++    setReadLoading(true);
++    knowledgeApi.wiki.rawRead(selectedWikiId, [ref.slice(4)])
++      .then(result => setReadContent(result?.items?.[0]?.content || ''))
++      .catch(error => tea.notify.error(error))
++      .finally(() => setReadLoading(false));
++  }, [selectedWikiId, subView, pages]);
++
+   const handleDeletePage = async (page: WikiPage) => {
+     if (!selectedWikiId) return;
+     const ref = (page as { id?: string }).id || page.path;
+diff --git a/MemoryPanel/web/src/routes/index.tsx b/MemoryPanel/web/src/routes/index.tsx
+index 86ddbe6..63c7149 100644
+--- a/MemoryPanel/web/src/routes/index.tsx
++++ b/MemoryPanel/web/src/routes/index.tsx
+@@ -1,3 +1,4 @@
++import { recordMulticaRoute } from '@/lib/multica-view-state';
+ /**
+  * 路由表定义
+  *
+@@ -44,3 +45,6 @@ export const routes: RouteObject[] = [
+  * 避免刷新 404（静态部署不需要服务端 fallback 配置）。
+  */
+ export const router = createHashRouter(routes);
++
++// Hash-router navigation uses pushState, which does not emit hashchange.
++router.subscribe(state => recordMulticaRoute(state.location.pathname));

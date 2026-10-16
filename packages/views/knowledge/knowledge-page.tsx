@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useAuthStore } from "@multica/core/auth";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -10,6 +10,7 @@ import {
 } from "@multica/core/knowledge";
 import { useT } from "../i18n";
 import { useNavigation } from "../navigation";
+import { useScrollRestorationAdapter } from "../platform/scroll-restoration";
 
 export function KnowledgePage() {
   const wsId = useWorkspaceId();
@@ -17,6 +18,31 @@ export function KnowledgePage() {
   const section = searchParams.get("section") === "skills" ? "skills" : "memory";
   const userId = useAuthStore((state) => state.user?.id);
   const frame = useRef<HTMLIFrameElement>(null);
+  const restoration = useScrollRestorationAdapter();
+  // The tab memento contains navigation metadata, never panel credentials or content.
+  const positionKey = `memory-position:${userId}:${wsId}:${section}`;
+  const position = useMemo(
+    () => ({ current: restoration?.getViewState?.(positionKey) }),
+    [restoration, positionKey],
+  );
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      const source = frame.current?.contentWindow;
+      if (!source || event.source !== source) return;
+      if (event.data?.type === "multica-memory-position-read") {
+        source.postMessage({
+          type: "multica-memory-position-restore",
+          position: position.current ?? null,
+        }, "*");
+      } else if (event.data?.type === "multica-memory-position-write" &&
+        typeof event.data.position === "string" && event.data.position.length <= 32_768) {
+        position.current = event.data.position;
+        restoration?.setViewState?.(positionKey, event.data.position);
+      }
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [restoration, positionKey, position]);
   useEffect(() => {
     if (!userId) return;
     const key = `multica:memory:onboarded:${userId}:${wsId}`;
