@@ -22,6 +22,7 @@
     "patches/017-knowledge-space-terminology.patch",
     "patches/018-panel-tab-position.patch",
     "patches/019-memory-model-settings.patch",
-    "patches/020-native-context-injectors.patch"
+    "patches/020-native-context-injectors.patch",
+    "patches/021-managed-space-template-entry.patch"
   ]
 }
