@@ -410,6 +410,9 @@ func (h *Handler) scopeKnowledgePanelRequest(r *http.Request, caller knowledgePa
 		return errors.New("unsupported panel API")
 	}
 	binding := caller.Binding
+	if p == "/api/v1/knowledge/model-settings/set" && caller.Member.Role != "owner" && caller.Member.Role != "admin" {
+		return errors.New("workspace administrator required")
+	}
 	for _, family := range []string{"user-key", "user", "team", "team-member", "config/instance"} {
 		prefix := "/api/v1/meta/" + family + "/"
 		if strings.HasPrefix(p, prefix) {
@@ -556,7 +559,7 @@ func (h *Handler) scopeKnowledgePanelRequest(r *http.Request, caller knowledgePa
 	if err := check(body, 0); err != nil {
 		return err
 	}
-	if strings.HasSuffix(p, "/list") || strings.HasSuffix(p, "/list-accessible") || strings.HasSuffix(p, "/listing") || strings.HasSuffix(p, "/search") || strings.HasSuffix(p, "/create") || strings.HasPrefix(p, "/api/v1/chat-memory/") || strings.HasSuffix(p, "/team-assets") || strings.HasSuffix(p, "/my-assets") || p == "/api/v1/task/list-with-agents" || strings.HasPrefix(p, "/api/v1/analytics/") {
+	if strings.HasPrefix(p, "/api/v1/knowledge/model-settings/") || strings.HasSuffix(p, "/list") || strings.HasSuffix(p, "/list-accessible") || strings.HasSuffix(p, "/listing") || strings.HasSuffix(p, "/search") || strings.HasSuffix(p, "/create") || strings.HasPrefix(p, "/api/v1/chat-memory/") || strings.HasSuffix(p, "/team-assets") || strings.HasSuffix(p, "/my-assets") || p == "/api/v1/task/list-with-agents" || strings.HasPrefix(p, "/api/v1/analytics/") {
 		body["team_id"] = binding.TeamID
 	}
 	if strings.HasPrefix(p, "/api/v1/meta/user-session-default/") || strings.HasPrefix(p, "/api/v1/meta/config/user/") {

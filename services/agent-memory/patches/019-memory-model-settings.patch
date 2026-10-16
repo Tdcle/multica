@@ -1,0 +1,654 @@
+diff --git a/MemoryCore/src/adapters/standalone/llm-runner.ts b/MemoryCore/src/adapters/standalone/llm-runner.ts
+index 2526c8e..75ebeec 100644
+--- a/MemoryCore/src/adapters/standalone/llm-runner.ts
++++ b/MemoryCore/src/adapters/standalone/llm-runner.ts
+@@ -305,6 +305,9 @@ export class StandaloneLLMRunner implements LLMRunner {
+       baseURL: this.config.baseUrl,
+       apiKey: this.config.apiKey,
+       compatibility: "compatible",
++      ...(process.env.MULTICA_MEMORY_RUNTIME_URL && params.instanceId && params.tags?.some(tag => tag.startsWith('team:')) ? {
++        headers: { 'X-Multica-Memory-Instance': params.instanceId, 'X-Multica-Memory-Team': params.tags.find(tag => tag.startsWith('team:'))!.slice(5) },
++      } : {}),
+     });
+ 
+     // Select tools based on mode + storage
+@@ -348,6 +351,7 @@ export class StandaloneLLMRunner implements LLMRunner {
+           : {}),
+         maxOutputTokens: maxTokens,
+         abortSignal: combinedSignal,
++        ...(process.env.MULTICA_MEMORY_RUNTIME_URL ? { maxRetries: 0 } : {}),
+         experimental_telemetry: {
+           isEnabled: true,
+           functionId: params.taskId,
+diff --git a/MemoryCore/src/core/persona/persona-generator.ts b/MemoryCore/src/core/persona/persona-generator.ts
+index 0c7fb3a..bffea77 100644
+--- a/MemoryCore/src/core/persona/persona-generator.ts
++++ b/MemoryCore/src/core/persona/persona-generator.ts
+@@ -215,6 +215,7 @@ export class PersonaGenerator {
+         // Service mode: LLM tools read/write via StorageAdapter (COS) instead of local FS
+         storage: this.storage,
+         storagePrefix: this.storage ? "" : undefined,
++        instanceId: this.instanceId,
+         ...traceParams,
+       });
+       this.logger?.debug?.(`${TAG} LLM runner completed`);
+diff --git a/MemoryCore/src/core/record/l1-extractor.ts b/MemoryCore/src/core/record/l1-extractor.ts
+index ad0a500..6d55782 100644
+--- a/MemoryCore/src/core/record/l1-extractor.ts
++++ b/MemoryCore/src/core/record/l1-extractor.ts
+@@ -202,7 +202,7 @@ export async function extractL1Memories(params: {
+       model: options.model,
+       promptMode: options.promptMode,
+       memoryPrompt: options.memoryPrompt,
+-      traceContext: { teamId, userId, agentId, sessionId },
++      traceContext: { instanceId: metricInstanceId, teamId, userId, agentId, sessionId },
+       llmRunner: options.llmRunner,
+     });
+     scenes = outcome.scenes;
+@@ -319,7 +319,7 @@ export async function extractL1Memories(params: {
+         conflictRecallTopK: options.conflictRecallTopK,
+         embeddingTimeoutMs: options.embeddingTimeoutMs,
+         llmRunner: options.llmRunner,
+-        traceContext: { teamId, userId, agentId, sessionId },
++        traceContext: { instanceId: metricInstanceId, teamId, userId, agentId, sessionId },
+         ...(teamId || userId || agentId || sessionId || taskId ? { filter: { teamId, userId, agentId, sessionId, taskId } } : {}),
+       });
+       dedupLatencyMs = Date.now() - dedupStartMs;
+diff --git a/MemoryCore/src/core/scene/scene-extractor.ts b/MemoryCore/src/core/scene/scene-extractor.ts
+index 169c8a4..174b303 100644
+--- a/MemoryCore/src/core/scene/scene-extractor.ts
++++ b/MemoryCore/src/core/scene/scene-extractor.ts
+@@ -282,6 +282,7 @@ export class SceneExtractor {
+         systemPrompt,
+         prompt: userPrompt,
+         taskId: `scene-extract-${Date.now()}`,
++        instanceId: this.instanceId,
+         timeoutMs: this.timeoutMs,
+         // maxTokens omitted → core uses the resolved model's maxTokens from catalog
+         workspaceDir: sceneBlocksDir,
+diff --git a/MemoryCore/src/core/types.ts b/MemoryCore/src/core/types.ts
+index 543114f..244b714 100644
+--- a/MemoryCore/src/core/types.ts
++++ b/MemoryCore/src/core/types.ts
+@@ -137,6 +137,7 @@ export interface LLMRunParams {
+  * 好处：langfuse UI 上按 user_id / session_id 独立列过滤，不用把身份塞进 name。
+  */
+ export interface TraceContext {
++  instanceId?: string;
+   teamId?: string;
+   userId?: string;
+   agentId?: string;
+@@ -153,11 +154,13 @@ export interface TraceContext {
+  */
+ export function buildTraceParams(traceName: string, ctx?: TraceContext): {
+   traceName: string;
++  instanceId?: string;
+   userId?: string;
+   sessionId?: string;
+   tags?: string[];
+ } {
+-  const out: { traceName: string; userId?: string; sessionId?: string; tags?: string[] } = { traceName };
++  const out: { traceName: string; instanceId?: string; userId?: string; sessionId?: string; tags?: string[] } = { traceName };
++  if (ctx?.instanceId) out.instanceId = ctx.instanceId;
+   if (ctx?.userId) out.userId = ctx.userId;
+   if (ctx?.sessionId) out.sessionId = ctx.sessionId;
+   const tags: string[] = [];
+diff --git a/MemoryKnowledge/src/callback.ts b/MemoryKnowledge/src/callback.ts
+index 6cde773..8f2baba 100644
+--- a/MemoryKnowledge/src/callback.ts
++++ b/MemoryKnowledge/src/callback.ts
+@@ -129,13 +129,14 @@ export function buildProgressFn(
+  * Reads page titles + descriptions, asks LLM for a ≤100 char Chinese summary.
+  * 复用 createLlmClient（自动走正确协议 openai/anthropic + Langfuse 追踪 + 超时处理）。
+  */
+-import { createLlmClient } from "./engines/wiki/ingest-v2/llm.js";
++import { createLlmClient, type RawLlmConfig } from "./engines/wiki/ingest-v2/llm.js";
+ 
+ export async function generateWikiSummary(
+   wikiId: string,
+   name: string,
+   pages: Array<{ title: string; description?: string }>,
+   llm: LlmConfig,
++  scope?: Pick<RawLlmConfig, 'headers' | 'maxRetries'>,
+ ): Promise<string> {
+   if (pages.length === 0) {
+     console.warn(`${TAG} wiki summary skipped: no pages for ${wikiId}`);
+@@ -155,7 +156,7 @@ ${pageList}`;
+ 
+   console.info(`${TAG} wiki summary LLM call start for ${wikiId} (model=${llm.model}, protocol=${llm.protocol}, pages=${pages.length})`);
+   try {
+-    const client = createLlmClient(llm);
++    const client = createLlmClient({ ...llm, ...scope });
+     const text = await client.chat({
+       system: "你是一个知识库摘要生成器。只输出摘要文本，不要输出其他内容。",
+       prompt,
+diff --git a/MemoryKnowledge/src/engines/wiki/ingest-v2/file-protocol.ts b/MemoryKnowledge/src/engines/wiki/ingest-v2/file-protocol.ts
+index b558b99..b3d37e9 100644
+--- a/MemoryKnowledge/src/engines/wiki/ingest-v2/file-protocol.ts
++++ b/MemoryKnowledge/src/engines/wiki/ingest-v2/file-protocol.ts
+@@ -30,10 +30,10 @@ export interface ParseResult {
+ }
+ 
+ /**
+- * 开标签：标准为 >>>；模型偶发漏写一个 > 变成 >>。
+- * 接受 ≥2 个收尾 >，避免「长输出但 files=0」。
++ * Models may shorten the opening delimiter to one or two > characters.
++ * The quoted path, wiki-only path validation, and complete END delimiter remain required.
+  */
+-const OPEN_RE = /<<<FILE\s+path\s*=\s*"([^"]*)"\s*>>+/g;
++const OPEN_RE = /<<<FILE\s+path\s*=\s*"([^"]*)"\s*>+/g;
+ /**
+  * 闭标签：标准为 <<<END>>>；模型偶发拆成 <<<\nEND>>>。
+  * 仅放宽 END 两侧空白（含换行），仍要求字面 END。
+diff --git a/MemoryKnowledge/src/engines/wiki/ingest-v2/llm.ts b/MemoryKnowledge/src/engines/wiki/ingest-v2/llm.ts
+index d1fec07..35a5787 100644
+--- a/MemoryKnowledge/src/engines/wiki/ingest-v2/llm.ts
++++ b/MemoryKnowledge/src/engines/wiki/ingest-v2/llm.ts
+@@ -18,6 +18,8 @@ const log = createLogger("wiki-ingest-llm");
+ 
+ /** 上层传入的原始 llmConfig（宽松，字段可能用不同命名）。 */
+ export interface RawLlmConfig {
++  headers?: Record<string, string>;
++  maxRetries?: number;
+   protocol?: "openai" | "anthropic";
+   provider?: string;
+   apiKey?: string;
+@@ -114,7 +116,7 @@ export function createLlmClient(raw: RawLlmConfig | undefined): LlmClient {
+   // 按 protocol 选 AI SDK provider 工厂（两者都实现 LanguageModelV3 接口）。
+   const provider = config.protocol === "anthropic"
+     ? createAnthropic({ baseURL: config.baseUrl, apiKey: config.apiKey })
+-    : createOpenAI({ baseURL: config.baseUrl, apiKey: config.apiKey });
++    : createOpenAI({ baseURL: config.baseUrl, apiKey: config.apiKey, headers: raw?.headers });
+ 
+   return {
+     config,
+@@ -145,6 +147,7 @@ export function createLlmClient(raw: RawLlmConfig | undefined): LlmClient {
+           maxOutputTokens: params.maxOutputTokens ?? config.maxTokens,
+           ...(params.temperature !== undefined ? { temperature: params.temperature } : {}),
+           abortSignal: signal,
++          ...(raw?.maxRetries !== undefined ? { maxRetries: raw.maxRetries } : {}),
+           experimental_telemetry: {
+             isEnabled: true,
+             functionId: params.label ?? "chat",
+diff --git a/MemoryKnowledge/src/module.ts b/MemoryKnowledge/src/module.ts
+index 9439f69..5315a80 100644
+--- a/MemoryKnowledge/src/module.ts
++++ b/MemoryKnowledge/src/module.ts
+@@ -414,6 +414,7 @@ export function createKnowledgeModule(config: KnowledgeModuleConfig): KnowledgeM
+         apiKey: effectiveLlm.apiKey,
+         model: effectiveLlm.model,
+         customEndpoint: effectiveLlm.baseUrl,
++        ...(process.env.MULTICA_MEMORY_RUNTIME_URL ? { headers: { 'X-Multica-Memory-Instance': serviceId, 'X-Multica-Memory-Team': teamId }, maxRetries: 0 } : {}),
+         maxContextSize: effectiveLlm.maxTokens,
+         timeoutMs: effectiveLlm.timeoutMs,
+         stream: effectiveLlm.stream ?? false,
+diff --git a/MemoryKnowledge/src/store/wiki-service.ts b/MemoryKnowledge/src/store/wiki-service.ts
+index 34c117b..a8210ec 100644
+--- a/MemoryKnowledge/src/store/wiki-service.ts
++++ b/MemoryKnowledge/src/store/wiki-service.ts
+@@ -1347,6 +1347,7 @@ export class WikiService {
+           row.name,
+           pages.map((p) => ({ title: p.title, description: p.description })),
+           this.callbackConfig.resolveLlm(row.service_id),
++          process.env.MULTICA_MEMORY_RUNTIME_URL ? { headers: { 'X-Multica-Memory-Instance': row.service_id, 'X-Multica-Memory-Team': row.team_id }, maxRetries: 0 } : undefined,
+         );
+         this.logger?.info?.(`[wiki] summary generation done (wikiId=${row.wiki_id}, len=${summary?.length ?? 0}, empty=${!summary})`);
+         if (summary) {
+diff --git a/MemoryPanel/src/panel/http/routes/knowledge/index.ts b/MemoryPanel/src/panel/http/routes/knowledge/index.ts
+index 33faf53..26cfc9d 100644
+--- a/MemoryPanel/src/panel/http/routes/knowledge/index.ts
++++ b/MemoryPanel/src/panel/http/routes/knowledge/index.ts
+@@ -9,6 +9,7 @@
+  *   - /api/v1/knowledge/{type}/team-assets （list-routes）
+  *   - /api/v1/knowledge/source/*           （source-routes，外部来源/凭据薄转发）
+  */
++import { registerModelSettingsRoutes } from './model-settings-routes.js';
+ import type { Hono } from 'hono';
+ import type { PanelDeps } from '../../../panel-deps.js';
+ import { registerKnowledgeWikiRoutes } from './wiki-routes.js';
+@@ -19,6 +20,7 @@ import { registerKnowledgeListRoutes } from './list-routes.js';
+ import { registerKnowledgeSourceRoutes } from './source-routes.js';
+ 
+ export function registerKnowledgeRoutes(api: Hono, deps: PanelDeps): void {
++  registerModelSettingsRoutes(api, deps);
+   registerKnowledgeWikiRoutes(api, deps);
+   registerKnowledgeCodeGraphRoutes(api, deps);
+   registerKnowledgeCallbackRoutes(api, deps);
+diff --git a/MemoryPanel/src/panel/http/routes/knowledge/model-settings-routes.ts b/MemoryPanel/src/panel/http/routes/knowledge/model-settings-routes.ts
+new file mode 100644
+index 0000000..8dc0856
+--- /dev/null
++++ b/MemoryPanel/src/panel/http/routes/knowledge/model-settings-routes.ts
+@@ -0,0 +1,33 @@
++import type { Hono } from 'hono';
++import type { PanelDeps } from '../../../panel-deps.js';
++import { validatePanelMetaHeaders } from '../../middleware/validate-panel-headers.js';
++import { respondControlError, respondEnvelope } from '../../envelope.js';
++import { buildCtx, readJson, str, requireTeamMember, okEnvelope } from './common.js';
++
++export function registerModelSettingsRoutes(api: Hono, deps: PanelDeps): void {
++  const mw = validatePanelMetaHeaders(deps);
++  for (const action of ['get', 'set']) api.post(`/knowledge/model-settings/${action}`, mw, async c => {
++    const ctx = buildCtx(c);
++    const body = await readJson(c);
++    const teamId = str(body, 'team_id');
++    if (!teamId) return respondControlError(c, 400, 'MISSING_TEAM_ID');
++    const gate = await requireTeamMember(deps, c, ctx, teamId);
++    if ('error' in gate) return gate.error;
++    if (action === 'set') {
++      const member = await deps.metaKernel.invoke('team-member/get', { team_id: teamId, user_id: gate.userId }, ctx);
++      if (member.code !== 0 || (member.data as { role?: string } | null)?.role !== 'admin') return respondControlError(c, 403, 'ADMIN_REQUIRED');
++    }
++    const url = process.env.MULTICA_MEMORY_RUNTIME_URL;
++    const token = process.env.MULTICA_MEMORY_RUNTIME_TOKEN;
++    if (!url || !token) return respondControlError(c, 503, 'MODEL_SETTINGS_UNAVAILABLE');
++    try {
++      const response = await fetch(`${url}/settings/${action}`, {
++        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
++        body: JSON.stringify({ instance_id: ctx.instanceId, team_id: teamId, model: body.model, effort: body.effort }),
++        signal: AbortSignal.timeout(15_000),
++      });
++      if (!response.ok) return respondControlError(c, response.status === 400 ? 400 : 503, response.status === 400 ? 'INVALID_MODEL_OR_EFFORT' : 'MODEL_SETTINGS_UNAVAILABLE');
++      return respondEnvelope(c, okEnvelope(c, await response.json()));
++    } catch { return respondControlError(c, 503, 'MODEL_SETTINGS_UNAVAILABLE'); }
++  });
++}
+diff --git a/MemoryPanel/web/src/components/MemoryModelSettings.tsx b/MemoryPanel/web/src/components/MemoryModelSettings.tsx
+new file mode 100644
+index 0000000..3614dcc
+--- /dev/null
++++ b/MemoryPanel/web/src/components/MemoryModelSettings.tsx
+@@ -0,0 +1,55 @@
++import { useEffect, useState } from 'react';
++import { Alert, Button, Select, Text } from 'tea-component';
++import { useTranslation } from 'react-i18next';
++import { useTeams } from '@/services';
++import { multicaEmbed } from '@/lib/multicaEmbed';
++import { memoryModelSettings, type ModelSettings } from '@/lib/api/model-settings';
++
++export function MemoryModelSettings() {
++  const { t } = useTranslation();
++  const { activeTeamId } = useTeams();
++  const [settings, setSettings] = useState<ModelSettings | null>(null);
++  const [model, setModel] = useState('');
++  const [effort, setEffort] = useState('');
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState('');
++  const [saved, setSaved] = useState(false);
++  const canManage = multicaEmbed?.can_manage_space === true;
++  useEffect(() => {
++    let cancelled = false;
++    setSettings(null); setError(''); setSaved(false);
++    if (activeTeamId) void memoryModelSettings('get', activeTeamId).then(data => {
++      if (!cancelled) { setSettings(data); setModel(data.model); setEffort(data.effort); }
++    }).catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
++    return () => { cancelled = true; };
++  }, [activeTeamId]);
++  async function save() {
++    if (!activeTeamId) return;
++    setSaving(true); setError(''); setSaved(false);
++    try {
++      const data = await memoryModelSettings('set', activeTeamId, { model, effort });
++      setSettings(data); setModel(data.model); setEffort(data.effort); setSaved(true);
++    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
++    finally { setSaving(false); }
++  }
++  const selected = settings?.models.find(m => m.id === model);
++  return <section style={{ marginBottom: 24, paddingBottom: 20, borderBottom: '1px solid var(--tea-color-border-primary-default)' }}>
++    <Text style={{ display: 'block', fontWeight: 500, marginBottom: 8 }}>{t('settings.model.title')}</Text>
++    <Text theme="weak" style={{ display: 'block', fontSize: 12, marginBottom: 16 }}>{t('settings.model.description')}</Text>
++    {error && <Alert type="error" style={{ marginBottom: 12 }}>{error}</Alert>}
++    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
++      <label><Text style={{ display: 'block', marginBottom: 6 }}>{t('settings.model.name')}</Text>
++        <Select aria-label={t('settings.model.name')} value={model} options={settings?.models.map(m => ({ value: m.id, text: m.name })) ?? []}
++          disabled={!settings || !canManage || saving} onChange={value => { setModel(value); setEffort(settings?.models.find(m => m.id === value)?.default_effort ?? ''); setSaved(false); }} style={{ width: '100%' }} />
++      </label>
++      <label><Text style={{ display: 'block', marginBottom: 6 }}>{t('settings.model.effort')}</Text>
++        <Select aria-label={t('settings.model.effort')} value={effort} options={selected?.efforts.map(value => ({ value, text: t(`settings.model.effort.${value}`, { defaultValue: value }) })) ?? []}
++          disabled={!settings || !canManage || saving} onChange={value => { setEffort(value); setSaved(false); }} style={{ width: '100%' }} />
++      </label>
++    </div>
++    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
++      {canManage ? <Button type="primary" disabled={!settings || !selected?.efforts.includes(effort) || saving || (settings.model === model && settings.effort === effort)} onClick={() => void save()}>{t(saving ? 'settings.model.saving' : 'settings.model.save')}</Button> : <Text theme="weak">{t('settings.model.adminOnly')}</Text>}
++      {saved && <Text theme="weak">{t('settings.model.saved')}</Text>}
++    </div>
++  </section>;
++}
+diff --git a/MemoryPanel/web/src/components/SettingsDialog.tsx b/MemoryPanel/web/src/components/SettingsDialog.tsx
+index 27acf3b..34eccc4 100644
+--- a/MemoryPanel/web/src/components/SettingsDialog.tsx
++++ b/MemoryPanel/web/src/components/SettingsDialog.tsx
+@@ -1,13 +1,4 @@
+-/**
+- * SettingsDialog — 全局设置弹窗（从顶栏⚙图标触发）。
+- *
+- * 当前只有一个 Tab：「权限管理」— 控制资源管理模块的开关
+- * （Wiki / Code / Skill / Chat_Memory），防止未稳定使用的模块
+- * 被注入内核运行。
+- *
+- * 后续可在 TABS 数组里追加其他 Tab（如通知、偏好设置等）。
+- *
+- */
++// Workspace settings and per-user resource visibility.
+ import { useEffect, useState } from 'react';
+ import { useTranslation } from 'react-i18next';
+ import {
+@@ -24,6 +15,8 @@ import {
+   ChatIcon,
+ } from '@/components/multica-icons';
+ import { userConfigApi, type AssetCapabilityKey } from '@/lib/teamApi';
++import { MemoryModelSettings } from './MemoryModelSettings';
++import { multicaEmbed } from '@/lib/multicaEmbed';
+ import { tea } from '@/lib/tea-bridge';
+ 
+ // ===== 资源模块 =====
+@@ -127,6 +120,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
+   return (
+     <Modal visible caption={t('settings.caption')} size="m" onClose={onClose}>
+       <Modal.Body>
++      {multicaEmbed && <MemoryModelSettings />}
+       {activeTab === 'permissions' && (
+         <div>
+           <div style={{ paddingTop: 4 }}>
+diff --git a/MemoryPanel/web/src/i18n/en-US.ts b/MemoryPanel/web/src/i18n/en-US.ts
+index 9e1c63b..b32369b 100644
+--- a/MemoryPanel/web/src/i18n/en-US.ts
++++ b/MemoryPanel/web/src/i18n/en-US.ts
+@@ -1,6 +1,27 @@
+ /** English translation — en-US */
+ 
+ export const enUS = {
++  'settings.model.title': 'Extraction model',
++  'settings.model.description': 'Used for Wiki, memory and Skill extraction in this workspace. Changes apply to subsequent model calls; running calls keep their settings.',
++  'settings.model.name': 'Model',
++  'settings.model.effort': 'Reasoning effort',
++  'settings.model.save': 'Save model settings',
++  'settings.model.saving': 'Saving…',
++  'settings.model.saved': 'Saved',
++  'settings.model.adminOnly': 'Only workspace administrators can change these settings.',
++  'settings.model.effort.none': 'None',
++  'settings.model.effort.minimal': 'Minimal',
++  'settings.model.effort.low': 'Low',
++  'settings.model.effort.medium': 'Medium',
++  'settings.model.effort.high': 'High',
++  'settings.model.effort.xhigh': 'Very high',
++  'settings.model.effort.max': 'Maximum',
++  'settings.model.effort.ultra': 'Ultra',
++  'wiki.ingest.progress': '{{phase}} · {{completed}}/{{total}} completed, {{skipped}} skipped, {{failed}} failed',
++  'wiki.ingest.phase.extracting': 'Extracting documents',
++  'wiki.ingest.phase.merging': 'Merging knowledge',
++  'wiki.ingest.phase.indexing': 'Building index',
++  'wiki.ingest.refreshHint': 'Status refreshes every 2 seconds. Refreshing does not resubmit extraction.',
+   // ===== App =====
+   'app.checkingSession': 'Checking session…',
+ 
+@@ -118,7 +139,7 @@ export const enUS = {
+     'Login response is missing user info (data.user is null). Please contact backend to verify the auth/verify contract.',
+ 
+   // ===== SettingsDialog =====
+-  'settings.caption': 'Settings · Permissions',
++  'settings.caption': 'Memory settings',
+   'settings.title': 'Resource Module Toggles',
+   'settings.desc':
+     'Toggles are saved for the current user. When disabled, the proxy will not inject the corresponding capability for that user. Changes take effect immediately for new sessions.',
+@@ -354,7 +375,7 @@ export const enUS = {
+   'wiki.detail.processing': 'Processing',
+   'wiki.detail.clear': 'Clear',
+   'wiki.detail.ingestTitle': 'Ingest: {{name}}',
+-  'wiki.detail.queryCount': 'Queried {{count}} times',
++  'wiki.detail.queryCount': 'Status refreshed {{count}} times',
+   'wiki.detail.lastQuery': ', last at {{time}}',
+   'wiki.detail.addDoc.caption': 'Add Documents to {{name}}',
+   'wiki.detail.addDoc.hint': 'Choose a method to import documents',
+diff --git a/MemoryPanel/web/src/i18n/zh-CN.ts b/MemoryPanel/web/src/i18n/zh-CN.ts
+index 4283f78..e6d34d9 100644
+--- a/MemoryPanel/web/src/i18n/zh-CN.ts
++++ b/MemoryPanel/web/src/i18n/zh-CN.ts
+@@ -1,6 +1,27 @@
+ /** 中文翻译 — zh-CN */
+ 
+ export const zhCN = {
++  'settings.model.title': '抽取模型',
++  'settings.model.description': '用于本工作区的 Wiki、记忆和 Skill 抽取。保存后对后续模型调用生效，正在执行的调用保持原配置。',
++  'settings.model.name': '模型',
++  'settings.model.effort': '思考深度',
++  'settings.model.save': '保存模型设置',
++  'settings.model.saving': '保存中…',
++  'settings.model.saved': '已保存',
++  'settings.model.adminOnly': '仅工作区管理员可修改',
++  'settings.model.effort.none': '无',
++  'settings.model.effort.minimal': '极低',
++  'settings.model.effort.low': '低',
++  'settings.model.effort.medium': '中',
++  'settings.model.effort.high': '高',
++  'settings.model.effort.xhigh': '很高',
++  'settings.model.effort.max': '最高',
++  'settings.model.effort.ultra': '极高',
++  'wiki.ingest.progress': '{{phase}} · 完成 {{completed}}/{{total}}，跳过 {{skipped}}，失败 {{failed}}',
++  'wiki.ingest.phase.extracting': '抽取文档',
++  'wiki.ingest.phase.merging': '合并知识',
++  'wiki.ingest.phase.indexing': '建立索引',
++  'wiki.ingest.refreshHint': '每 2 秒刷新状态，刷新不会重新提交抽取。',
+   // ===== App =====
+   'app.checkingSession': '正在检测登录态…',
+ 
+@@ -114,7 +135,7 @@ export const zhCN = {
+   'login.error.noUser': '登录响应缺少用户信息（data.user 为空），请联系后端确认 auth/verify 契约。',
+ 
+   // ===== SettingsDialog =====
+-  'settings.caption': '设置 · 权限管理',
++  'settings.caption': 'Memory 设置',
+   'settings.title': '资源管理模块开关',
+   'settings.desc':
+     '开关按当前登录用户保存。关闭后，proxy 不会为该用户注入对应原子能力；变更对新会话即时生效。',
+@@ -345,7 +366,7 @@ export const zhCN = {
+   'wiki.detail.processing': '处理中',
+   'wiki.detail.clear': '清除',
+   'wiki.detail.ingestTitle': 'Ingest：{{name}}',
+-  'wiki.detail.queryCount': '已实际查询 {{count}} 次',
++  'wiki.detail.queryCount': '状态刷新 {{count}} 次',
+   'wiki.detail.lastQuery': '，最近 {{time}}',
+   'wiki.detail.addDoc.caption': '添加文档到 {{name}}',
+   'wiki.detail.addDoc.hint': '选择方式导入文档',
+diff --git a/MemoryPanel/web/src/lib/api/knowledge-api.ts b/MemoryPanel/web/src/lib/api/knowledge-api.ts
+index f9928d6..07f5fc9 100644
+--- a/MemoryPanel/web/src/lib/api/knowledge-api.ts
++++ b/MemoryPanel/web/src/lib/api/knowledge-api.ts
+@@ -84,7 +84,22 @@ export interface ImportAndIngestResult {
+   raw_persisted?: boolean;
+ }
+ 
++export interface WikiIngestProgress {
++  phase: 'extracting' | 'merging' | 'indexing';
++  total: number; completed: number; failed: number; skipped: number; percent: number;
++}
++
++export function parseWikiProgress(value: unknown): WikiIngestProgress | null {
++  if (!value || typeof value !== 'object') return null;
++  const p = value as Record<string, unknown>;
++  if (!['extracting', 'merging', 'indexing'].includes(String(p.phase))) return null;
++  if (!['total', 'completed', 'failed', 'skipped', 'percent'].every(key => typeof p[key] === 'number' && Number.isFinite(p[key]) && (p[key] as number) >= 0)) return null;
++  if ((p.percent as number) > 100 || (p.completed as number) + (p.failed as number) > (p.total as number)) return null;
++  return p as unknown as WikiIngestProgress;
++}
++
+ export interface WikiDetail {
++  progress?: WikiIngestProgress | null;
+   wiki_id: string;
+   team_id: string;
+   name: string;
+@@ -380,19 +395,6 @@ export function wikiStageLabel(status: WikiDetail['status'], internalStatus?: st
+   return internalStatus ? (map[internalStatus] ?? internalStatus) : i18n.t('knowledgeApi.stage.processing');
+ }
+ 
+-export function wikiProgressPercent(status: WikiDetail['status'], internalStatus?: string | null): number {
+-  if (status === 'ready') return 100;
+-  if (status === 'failed') return 100;
+-  if (status === 'missing') return 100;
+-  if (status === 'pending') return 5;
+-  if (status === 'processing') {
+-    if (internalStatus === 'scanning') return 20;
+-    if (internalStatus === 'ingesting') return 60;
+-    if (internalStatus === 'rebuilding-index') return 85;
+-    return 40;
+-  }
+-  return 0;
+-}
+ 
+ export const knowledgeApi = {
+   health: () => panelPost<Record<string, unknown>>('/health').catch(() => ({ ok: true })),
+@@ -456,13 +458,14 @@ export const knowledgeApi = {
+           await new Promise(r => setTimeout(r, attempt === 1 ? 800 : 2000));
+           const detail = await knowledgeApi.wiki.get(wikiId);
+           const stage = wikiStageLabel(detail.status, detail.internal_status);
+-          const done = wikiProgressPercent(detail.status, detail.internal_status);
++          const progress = parseWikiProgress(detail.progress);
++          const done = progress?.percent ?? (detail.status === 'ready' ? 100 : 0);
+           const pageHint = typeof detail.page_count === 'number' ? i18n.t('knowledgeApi.ingest.currentPage', { count: detail.page_count }) : '';
+           callbacks.onProgress?.({
+             type: 'file_done',
+-            detail: i18n.t('knowledgeApi.ingest.check', { attempt, stage, pageHint }),
++            detail: `${stage}${pageHint}`,
+             done,
+-            total: 100,
++            total: progress || detail.status === 'ready' ? 100 : 0,
+             ts: Date.now(),
+           });
+ 
+diff --git a/MemoryPanel/web/src/lib/api/model-settings.ts b/MemoryPanel/web/src/lib/api/model-settings.ts
+new file mode 100644
+index 0000000..e7ba1de
+--- /dev/null
++++ b/MemoryPanel/web/src/lib/api/model-settings.ts
+@@ -0,0 +1,22 @@
++import { getPanelSession } from '../panelSession';
++
++export interface ModelOption { id: string; name: string; default_effort: string; efforts: string[] }
++export interface ModelSettings { model: string; effort: string; models: ModelOption[] }
++
++export async function memoryModelSettings(action: 'get' | 'set', teamId: string, selected?: { model: string; effort: string }): Promise<ModelSettings> {
++  const session = getPanelSession();
++  const res = await fetch(`/api/v1/knowledge/model-settings/${action}`, {
++    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Tdai-Service-Id': session?.instanceId ?? '', 'X-Tdai-User-Key': session?.userKey ?? '' },
++    body: JSON.stringify({ team_id: teamId, ...selected }),
++  });
++  const envelope = await res.json();
++  if (!res.ok || envelope?.code !== 0) throw new Error(envelope?.message || 'Model settings unavailable');
++  const data = envelope.data;
++  // Validate this boundary before selections reach the settings form.
++  if (!data || typeof data.model !== 'string' || typeof data.effort !== 'string' || !Array.isArray(data.models) || data.models.length === 0 || !data.models.every((m: unknown) => {
++    if (typeof m !== 'object' || m === null) return false;
++    const model = m as Record<string, unknown>;
++    return typeof model.id === 'string' && typeof model.name === 'string' && typeof model.default_effort === 'string' && Array.isArray(model.efforts) && model.efforts.every((e: unknown) => typeof e === 'string');
++  })) throw new Error('Invalid model settings response');
++  return data;
++}
+diff --git a/MemoryPanel/web/src/pages/WikiPage/components/wiki-detail-view.tsx b/MemoryPanel/web/src/pages/WikiPage/components/wiki-detail-view.tsx
+index dafc347..8c38dde 100644
+--- a/MemoryPanel/web/src/pages/WikiPage/components/wiki-detail-view.tsx
++++ b/MemoryPanel/web/src/pages/WikiPage/components/wiki-detail-view.tsx
+@@ -207,19 +207,15 @@ export function WikiDetailView({ store }: { store: WikiSourcesStore }) {
+                     <div className="_wiki-detail-ingest-meta">
+                       <Text theme="label">{displayIngestState.detail}</Text>
+                       <Text theme="label">
+-                        {displayIngestState.done}/{displayIngestState.total}
++                        {displayIngestState.done}%
+                       </Text>
+                     </div>
+-                    {displayIngestState.active && (
+-                      <Text theme="label">
+-                        {t('wiki.detail.queryCount', { count: displayIngestState.checkCount })}
+-                        {displayIngestState.lastCheckedAt
+-                          ? t('wiki.detail.lastQuery', { time: displayIngestState.lastCheckedAt })
+-                          : ''}
+-                      </Text>
+-                    )}
+                   </>
+                 )}
++                {displayIngestState.total === 0 && <Text theme="label">{displayIngestState.detail}</Text>}
++                {displayIngestState.active && <Text theme="label" style={{ display: 'block', marginTop: 8 }}>
++                  {t('wiki.ingest.refreshHint')}{displayIngestState.lastCheckedAt ? t('wiki.detail.lastQuery', { time: displayIngestState.lastCheckedAt }) : ''}
++                </Text>}
+                 {displayIngestState.active && displayIngestState.currentFile && (
+                   <Text theme="label" className="_wiki-detail-ingest-file">
+                     <FileIcon size={12} /> {displayIngestState.currentFile}
+diff --git a/MemoryPanel/web/src/pages/WikiPage/hooks/useWikiSources.ts b/MemoryPanel/web/src/pages/WikiPage/hooks/useWikiSources.ts
+index e15407e..a54587e 100644
+--- a/MemoryPanel/web/src/pages/WikiPage/hooks/useWikiSources.ts
++++ b/MemoryPanel/web/src/pages/WikiPage/hooks/useWikiSources.ts
+@@ -5,7 +5,7 @@ import { useMulticaViewState } from '@/lib/multica-view-state';
+  */
+ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+ import { useTranslation } from 'react-i18next';
+-import { knowledgeApi, wikiProgressPercent, wikiStageLabel, type GraphData, type WikiDetail, type WikiPage, type SourceProviderMeta, type WikiCrawlOptions, type WikiSourceListResult } from '@/lib/api/knowledge-api';
++import { knowledgeApi, parseWikiProgress, wikiStageLabel, type GraphData, type WikiDetail, type WikiPage, type SourceProviderMeta, type WikiCrawlOptions, type WikiSourceListResult } from '@/lib/api/knowledge-api';
+ import { useTeams, useAgents } from '@/services';
+ import { readAuth } from '@/components/LoginGate';
+ import { tea, confirmThenRun } from '@/lib/tea-bridge';
+@@ -319,8 +319,6 @@ export function useWikiSources() {
+   const [ingestCardCleared, setIngestCardCleared] = useState(false);
+   /** 最近一次轮询拿到 KS 真值的时间 —— 加工中展示"最近更新"，让用户确认进度在动。 */
+   const [pollAt, setPollAt] = useState('');
+-  /** 本轮轮询的检查次数（每次成功轮询 +1），展示"第 N 次检查 / 已实际查询 N 次"。 */
+-  const [pollCount, setPollCount] = useState(0);
+   /**
+    * 已提交、但新任务尚未真正开跑（还没进入 processing）的 wiki id 集合。
+    *
+@@ -506,9 +504,7 @@ export function useWikiSources() {
+         }
+         return changed ? next : prev;
+       });
+-      // 每次成功轮询递增检查计数 + 记录时间 —— 进度卡片据此展示
+-      // "第 N 次检查：…"与"已实际查询 N 次，最近 HH:MM:SS"，让用户确认进度在动。
+-      setPollCount((n) => n + 1);
++      // Report the last successful status refresh separately from extraction progress.
+       setPollAt(new Date().toLocaleTimeString());
+       if (selectedWikiId && map.has(selectedWikiId)) {
+         const d = map.get(selectedWikiId)!;
+@@ -567,18 +563,15 @@ export function useWikiSources() {
+         ? t('wiki.ingest.currentPage', { count: pageCount })
+         : '';
+ 
+-    // 加工中的文案必须带"第 N 次检查"与页数提示 —— 这是用户判断"进度真的在动"
+-    // 的唯一依据，任何重构都不得省略 attempt / pageHint 模板参数（历史回归教训）。
+-    //
+-    // pending / draft 同样按正常阶段文案展示（"扫描文件"档位），不再自造
+-    // "排队中，等待上一次任务让位"之类文案 —— 状态行只描述 KS 真实状态。
++    // Polling refreshes status; it never resubmits an extraction.
++    const progress = !staleTerminal ? parseWikiProgress(wiki?.progress) : null;
+     let detail: string;
+     if (status === 'ready') {
+       detail = t('wiki.ingest.done', { count: pageCount ?? 0 });
+     } else if (status === 'failed') {
+       detail = wiki?.sync_error || t('wiki.ingest.failed');
+     } else {
+-      detail = t('knowledgeApi.ingest.check', { attempt: Math.max(pollCount, 1), stage, pageHint });
++      detail = progress ? t('wiki.ingest.progress', { phase: t(`wiki.ingest.phase.${progress.phase}`), completed: progress.completed, total: progress.total, failed: progress.failed, skipped: progress.skipped }) : `${stage}${pageHint}`;
+     }
+ 
+     return {
+@@ -591,13 +584,12 @@ export function useWikiSources() {
+       wiki: name,
+       currentFile: '',
+       detail,
+-      done: wikiProgressPercent(status as WikiDetail['status'], internalStatus),
+-      total: 100,
+-      checkCount: session === 'active' ? pollCount : 0,
++      done: progress?.percent ?? (status === 'ready' ? 100 : 0),
++      total: progress || status === 'ready' ? 100 : 0,
+       lastCheckedAt: session === 'active' ? pollAt : '',
+       log: [] as { file: string; status: 'error' | 'done'; error?: string }[],
+     };
+-  }, [sources, selectedWikiId, pollAt, pollCount, pendingTakeover]);
++  }, [sources, selectedWikiId, pollAt, pendingTakeover]);
+ 
+   async function handleUnbindWiki(wikiId: string) {
+     if (!agentFilter) return;
+@@ -736,7 +728,6 @@ export function useWikiSources() {
+     // 提交即进入新一轮：复位"已清除"标记让卡片重新出现，
+     // 并把检查计数清零——否则第二次导入会接着上一次的数字往下数。
+     setIngestCardCleared(false);
+-    setPollCount(0);
+     setPollAt('');
+     // 屏蔽"上一个任务留下的终态"：从现在起直到新任务真正进入 processing，
+     // 该 wiki 上任何 ready/failed 都视为陈旧值、不展示给用户。

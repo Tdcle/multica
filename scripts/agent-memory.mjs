@@ -71,14 +71,14 @@ async function waitFor(predicate, timeout = 30_000) {
 
 function launch(config, name) {
   const base = config.urls.runtime + "/v1";
-  const common = { ...process.env, LOG_LEVEL: "warn", LOG_PATH: join(directory, "logs") };
+  const common = { ...process.env, MULTICA_MEMORY_RUNTIME_URL: config.urls.runtime, LOG_LEVEL: "warn", LOG_PATH: join(directory, "logs") };
   // A host's metadata backend must not silently replace this local data directory.
   for (const key of Object.keys(common)) if (key.startsWith("TDAI_METADATA_")) delete common[key];
   switch (name) {
-    case "runtime": return { cwd: project, args: [join(project, "scripts/agent-memory-runtime.mjs")], env: { ...common, MULTICA_MEMORY_RUNTIME_PORT: String(config.ports.runtime), MULTICA_MEMORY_RUNTIME_TOKEN: config.runtime.token, MULTICA_MEMORY_RUNTIME_COMMAND: config.runtime.command || "codex", ...(config.runtime.model ? { MULTICA_MEMORY_RUNTIME_MODEL: config.runtime.model } : {}) } };
+    case "runtime": return { cwd: project, args: [join(project, "scripts/agent-memory-runtime.mjs")], env: { ...common, MULTICA_MEMORY_RUNTIME_PORT: String(config.ports.runtime), MULTICA_MEMORY_RUNTIME_TOKEN: config.runtime.token, MULTICA_MEMORY_RUNTIME_COMMAND: config.runtime.command || "codex", MULTICA_MEMORY_RUNTIME_SETTINGS: join(directory, "model-settings.json"), ...(config.runtime.model ? { MULTICA_MEMORY_RUNTIME_MODEL: config.runtime.model } : {}) } };
     case "core": return { cwd: join(config.source, "MemoryCore"), args: ["--import", "tsx", "src/gateway/server.ts"], env: { ...common, TDAI_GATEWAY_CONFIG: join(directory, "core.yaml"), TDAI_DATA_DIR: config.core.data, TDAI_STATE_BACKEND: "local", WORKER_CONCURRENCY: "1", TDAI_SKILL_WORKER_CONCURRENCY: "1" } };
     case "knowledge": return { cwd: join(config.source, "MemoryKnowledge"), args: ["bin/server.mjs"], env: { ...common, HOST: "127.0.0.1", PORT: String(config.ports.knowledge), KNOWLEDGE_SERVICE_KEY: config.knowledge.key, KNOWLEDGE_DATA_DIR: config.knowledge.data, KNOWLEDGE_DB_PATH: join(config.knowledge.data, "knowledge.db"), KNOWLEDGE_PUBLIC_BASE_URL: config.urls.knowledge + "/v3", TMC_CALLBACK_URL: config.urls.panel, LLM_MODE: "custom", LLM_BASE_URL: base, LLM_MODEL: "codex", LLM_API_KEY: config.runtime.token, LLM_STREAM: "false", KNOWLEDGE_LLM_GLOBAL_CONCURRENCY: "1", KNOWLEDGE_INGEST_CONCURRENCY: "1" } };
-    case "panel": return { cwd: join(config.source, "MemoryPanel"), args: ["dist/index.js"], env: { ...common, HOST: "127.0.0.1", PORT: String(config.ports.panel), METADATA_INSTANCES_CONFIG: join(directory, "instances.json"), KNOWLEDGE_SERVICE_URL: config.urls.knowledge, KNOWLEDGE_AUTH_TOKEN: config.knowledge.key, KNOWLEDGE_LLM_BINDING_SYNC: "false", TDAI_AGENT_TEMPLATE_DIR: join(directory, "agent-templates") } };
+    case "panel": return { cwd: join(config.source, "MemoryPanel"), args: ["dist/index.js"], env: { ...common, HOST: "127.0.0.1", PORT: String(config.ports.panel), METADATA_INSTANCES_CONFIG: join(directory, "instances.json"), MULTICA_MEMORY_RUNTIME_URL: config.urls.runtime, MULTICA_MEMORY_RUNTIME_TOKEN: config.runtime.token, KNOWLEDGE_SERVICE_URL: config.urls.knowledge, KNOWLEDGE_AUTH_TOKEN: config.knowledge.key, KNOWLEDGE_LLM_BINDING_SYNC: "false", TDAI_AGENT_TEMPLATE_DIR: join(directory, "agent-templates") } };
     case "proxy": return { cwd: join(config.source, "MemoryProxy"), args: ["--import", "tsx/esm", "src/index.ts", "--config", join(directory, "proxy.yaml")], env: common };
     default: throw new Error("Unknown component");
   }
