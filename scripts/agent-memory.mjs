@@ -25,14 +25,20 @@ async function save(path, value) {
 }
 
 // Serialize controller operations; service wrappers do not acquire this lock.
-async function control(operation) {
+async function control(operation, waitForLock = false) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const path = join(directory, "controller.lock");
   let lock;
-  try { lock = await open(path, "wx", 0o600); }
-  catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    throw new Error(`Another controller owns ${path}; if interrupted, verify its recorded PID has exited before removing this lock`);
+  const deadline = Date.now() + (waitForLock ? 60_000 : 0);
+  for (;;) {
+    try { lock = await open(path, "wx", 0o600); break; }
+    catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (!waitForLock || Date.now() >= deadline) {
+        throw new Error(`Another controller owns ${path}; if interrupted, verify its recorded PID has exited before removing this lock`);
+      }
+      await pause(200);
+    }
   }
   try {
     await lock.writeFile(JSON.stringify({ pid: process.pid, fingerprint: await fingerprint(process.pid) }));
@@ -113,10 +119,11 @@ async function initialize() {
     skillRuntime: { allowLlmWrite: false }, injection: { enabled: true, injectors: ["skill", "knowledge", "tdai-memory"], externalGatewayUrl: urls.proxy },
   });
   const env = {
+    MULTICA_AGENT_MEMORY_STATE_DIR: directory,
     MULTICA_AGENT_MEMORY_CORE_URL: urls.core, MULTICA_AGENT_MEMORY_PANEL_URL: urls.panel, MULTICA_AGENT_MEMORY_PROXY_URL: urls.proxy, MULTICA_AGENT_MEMORY_KNOWLEDGE_URL: urls.knowledge,
     MULTICA_AGENT_MEMORY_KNOWLEDGE_KEY: config.knowledge.key, MULTICA_AGENT_MEMORY_API_KEY: config.core.key, MULTICA_AGENT_MEMORY_ADMIN_KEY: config.core.admin, MULTICA_AGENT_MEMORY_SECRET_KEY: config.encryptionKey, MULTICA_AGENT_MEMORY_INSTANCE_ID: config.instance,
   };
-  await writeFile(join(directory, "multica.env"), Object.entries(env).map(([key, value]) => `${key}=${value}`).join("\n") + "\n", { mode: 0o600 });
+  await writeFile(join(directory, "multica.env"), Object.entries(env).map(([key, value]) => `${key}='${value.replaceAll("'", "'\\''")}'`).join("\n") + "\n", { mode: 0o600 });
   process.stdout.write(`Private service configuration created in ${directory}\nBackend environment: ${join(directory, "multica.env")}\n`);
 }
 
@@ -192,7 +199,30 @@ async function bootstrap(config) {
   if (!seeded.response.ok || seeded.body.code !== 0) throw new Error("Core provisioning account could not be initialized; preserve an existing account's admin key");
 }
 
-if (command === "init") await control(initialize);
+function validateStartupConfig(config) {
+  const expected = {
+    MULTICA_AGENT_MEMORY_CORE_URL: config.urls.core,
+    MULTICA_AGENT_MEMORY_PANEL_URL: config.urls.panel,
+    MULTICA_AGENT_MEMORY_PROXY_URL: config.urls.proxy,
+    MULTICA_AGENT_MEMORY_KNOWLEDGE_URL: config.urls.knowledge,
+    MULTICA_AGENT_MEMORY_API_KEY: config.core.key,
+    MULTICA_AGENT_MEMORY_ADMIN_KEY: config.core.admin,
+    MULTICA_AGENT_MEMORY_KNOWLEDGE_KEY: config.knowledge.key,
+    MULTICA_AGENT_MEMORY_SECRET_KEY: config.encryptionKey,
+    MULTICA_AGENT_MEMORY_INSTANCE_ID: config.instance,
+  };
+  for (const [key, value] of Object.entries(expected)) {
+    if (process.env[key] !== value) {
+      throw new Error(`${key} does not match the configured local Memory service. Copy the matching values from its private multica.env into this checkout's environment, preserving existing credentials.`);
+    }
+  }
+}
+
+// External Memory services retain their own lifecycle. A state directory opts in
+// to starting an already configured local service alongside Multica.
+if (command === "ensure" && !workerDirectory && !process.env.MULTICA_AGENT_MEMORY_STATE_DIR) {
+  // No locally managed service configured.
+} else if (command === "init") await control(initialize);
 else {
   const config = await json(join(directory, "config.json"));
   if (command === "_serve") { if (!names.includes(component)) throw new Error("Unknown component"); await serve(config, component); }
@@ -205,13 +235,14 @@ else {
         const state = (await owned(record, "wrapper")) && (await owned(record, "child")) ? (await healthy(config, name)) ? "running" : "unhealthy" : (await owned(record, "child")) ? "orphaned child" : "stopped";
         process.stdout.write(`${name}: ${state} (${config.urls[name]})\n`);
       }
-    } else if (["start", "stop", "restart"].includes(command)) {
+    } else if (["start", "stop", "restart", "ensure"].includes(command)) {
+      if (command === "ensure") validateStartupConfig(config);
       await control(async () => {
-      if (command !== "start") for (const name of [...selected].reverse()) await stop(config, name);
+      if (command === "stop" || command === "restart") for (const name of [...selected].reverse()) await stop(config, name);
       if (command !== "stop") {
         for (const name of selected) { await start(config, name); if (name === "core") await bootstrap(config); }
       }
-      });
+      }, command === "ensure");
     } else if (command === "test-recovery") {
       if (process.env.MULTICA_RUN_REAL_AGENT_SMOKE !== "1") throw new Error("Set MULTICA_RUN_REAL_AGENT_SMOKE=1 to authorize inference and a managed Core crash test");
       const child = spawn("bash", [join(project, "scripts/dev-env.sh"), "exec", "--", process.execPath, script, "_test-recovery", "all", directory], { cwd: project, stdio: "inherit" });
@@ -220,7 +251,7 @@ else {
       if (process.env.MULTICA_RUN_REAL_AGENT_SMOKE !== "1") throw new Error("Real inference requires explicit opt-in");
       if (process.env.PORT && await listening(Number(process.env.PORT))) throw new Error("Stop this checkout's API before testing an alternate Core against its database; its worker competes for the same outbox");
       const env = { ...process.env, MULTICA_AGENT_MEMORY_CORE_STORAGE_DIR: config.core.data, MULTICA_AGENT_MEMORY_RESTART_TEST_STATE_DIR: directory };
-      for (const line of (await readFile(join(directory, "multica.env"), "utf8")).trim().split("\n")) { const index = line.indexOf("="); env[line.slice(0, index)] = line.slice(index + 1); }
+      for (const line of (await readFile(join(directory, "multica.env"), "utf8")).trim().split("\n")) { const index = line.indexOf("="); const value = line.slice(index + 1); env[line.slice(0, index)] = value.startsWith("'") ? value.slice(1, -1).replaceAll("'\\''", "'") : value; }
       const timeout = process.env.MULTICA_AGENT_MEMORY_LARGE_SOURCE_TEST === "1" ? "40m" : "15m";
       const child = spawn("go", ["-C", "server", "test", "-tags=agentintegration", "./internal/handler", "-run", "^TestKnowledgeLiveFailedSkillRetry$", "-count=1", "-timeout=" + timeout, "-v"], { cwd: project, env, stdio: "inherit" });
       process.exitCode = await new Promise((resolveExit, reject) => { child.once("error", reject); child.once("exit", code => resolveExit(code ?? 1)); });
@@ -230,6 +261,6 @@ else {
       for (const module of ["MemoryKnowledge", "MemoryPanel", "MemoryPanel/web"]) await execute("npm", ["run", "build"], { cwd: join(config.source, module), maxBuffer: 4 * 1024 * 1024 });
       process.stdout.write("Native Knowledge and Panel builds complete\n");
       });
-    } else throw new Error("Use init, build, start, stop, restart, status, or test-recovery; optionally specify a component");
+    } else throw new Error("Use init, build, start, stop, restart, ensure, status, or test-recovery; optionally specify a component");
   }
 }
