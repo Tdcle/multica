@@ -26,21 +26,6 @@ func (q *Queries) BindAgentMemory(ctx context.Context, arg BindAgentMemoryParams
 	return err
 }
 
-const cancelAgentMemoryExtractions = `-- name: CancelAgentMemoryExtractions :exec
-UPDATE knowledge_extraction SET status='cancelled',lease_token=NULL,lease_until=NULL,updated_at=now()
-WHERE workspace_id=$1 AND agent_id=$2 AND status IN ('pending','processing','submitted')
-`
-
-type CancelAgentMemoryExtractionsParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	AgentID     pgtype.UUID `json:"agent_id"`
-}
-
-func (q *Queries) CancelAgentMemoryExtractions(ctx context.Context, arg CancelAgentMemoryExtractionsParams) error {
-	_, err := q.db.Exec(ctx, cancelAgentMemoryExtractions, arg.WorkspaceID, arg.AgentID)
-	return err
-}
-
 const cancelMissingMemoryExtractions = `-- name: CancelMissingMemoryExtractions :exec
 UPDATE knowledge_extraction SET status='cancelled',lease_token=NULL,lease_until=NULL,updated_at=now()
 WHERE memory_id=$1 AND status IN ('pending','processing','submitted')

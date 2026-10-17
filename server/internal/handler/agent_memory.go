@@ -207,21 +207,6 @@ func (h *Handler) BindAgentMemory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to read binding")
 		return
 	}
-	if old.MemoryID.Valid && old.MemoryID != next {
-		if _, err = q.LockAgentMemory(r.Context(), db.LockAgentMemoryParams{ID: old.MemoryID, WorkspaceID: agent.WorkspaceID}); err != nil {
-			writeError(w, 500, "failed to lock current memory")
-			return
-		}
-		busy, e := q.HasActiveMemoryExtractions(r.Context(), old.MemoryID)
-		if e != nil {
-			writeError(w, 500, "failed to check extraction state")
-			return
-		}
-		if busy {
-			writeError(w, 409, "memory extraction is running; retry after it finishes")
-			return
-		}
-	}
 	if next.Valid {
 		memory, e := q.LockAgentMemory(r.Context(), db.LockAgentMemoryParams{ID: next, WorkspaceID: agent.WorkspaceID})
 		if e != nil {
@@ -266,10 +251,6 @@ func (h *Handler) BindAgentMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	if err = q.UnbindAgentMemory(r.Context(), db.UnbindAgentMemoryParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID}); err != nil {
 		writeError(w, 500, "failed to detach memory")
-		return
-	}
-	if err = q.CancelAgentMemoryExtractions(r.Context(), db.CancelAgentMemoryExtractionsParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID}); err != nil {
-		writeError(w, 500, "failed to cancel pending extractions")
 		return
 	}
 	if next.Valid {
