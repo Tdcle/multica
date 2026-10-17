@@ -101,24 +101,25 @@ func (s *Service) process(ctx context.Context, job db.KnowledgeExtraction) (stri
 			return "", receipt, 0, err
 		}
 	}
-	current, err := s.Queries.GetAgentMemoryBinding(ctx, db.GetAgentMemoryBindingParams{WorkspaceID: job.WorkspaceID, AgentID: job.AgentID})
+	memory, err := s.Queries.GetAgentMemory(ctx, db.GetAgentMemoryParams{ID: job.MemoryID, WorkspaceID: job.WorkspaceID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "cancelled", receipt, 0, nil
 	}
 	if err != nil {
 		return "", receipt, 0, err
 	}
-	if current.AgentMemory.ID != job.MemoryID || !current.BindingCreatedAt.Time.Equal(job.BindingCreatedAt.Time) {
+	// An outbox job owns its original target independently of future bindings.
+	if memory.Status == "deleting" {
 		return "cancelled", receipt, 0, nil
 	}
-	if current.AgentMemory.Status != "ready" {
+	if memory.Status != "ready" {
 		return "pending", receipt, 5 * time.Second, nil
 	}
-	binding := MemoryBinding(current.AgentMemory)
+	scope := ScopeFor(MemoryBinding(memory))
 	var payload sourcePayload
 	if len(job.SourcePayload) == 0 {
 		var waiting bool
-		payload, waiting, err = s.collect(ctx, job)
+		payload, waiting, err = s.collect(ctx, job, scope)
 		if err != nil {
 			return "", receipt, 0, err
 		}
@@ -135,7 +136,6 @@ func (s *Service) process(ctx context.Context, job db.KnowledgeExtraction) (stri
 	} else if err = json.Unmarshal(job.SourcePayload, &payload); err != nil {
 		return "", receipt, 0, err
 	}
-	scope := ScopeFor(binding)
 	if receipt.RetryFailedSkills {
 		for index := range receipt.Skills {
 			if !receipt.Skills[index].Complete {
@@ -284,7 +284,7 @@ func (s *Service) process(ctx context.Context, job db.KnowledgeExtraction) (stri
 	return "ready", receipt, 0, nil
 }
 
-func (s *Service) collect(ctx context.Context, job db.KnowledgeExtraction) (sourcePayload, bool, error) {
+func (s *Service) collect(ctx context.Context, job db.KnowledgeExtraction, scope Scope) (sourcePayload, bool, error) {
 	payload := sourcePayload{Version: 2, SessionID: "multica-" + util.UUIDToString(job.ID)}
 	tasks, err := s.Queries.ListKnowledgeSourceTasks(ctx, db.ListKnowledgeSourceTasksParams{IssueID: job.IssueID, CreatedAt: job.CreatedAt, WorkspaceID: job.WorkspaceID, AgentID: job.AgentID})
 	if err != nil {
@@ -351,8 +351,7 @@ func (s *Service) collect(ctx context.Context, job db.KnowledgeExtraction) (sour
 		MaxBytes    int `json:"max_bytes"`
 		MaxMessages int `json:"max_messages"`
 	}
-	scope := Scope{InstanceID: job.InstanceID, TeamID: job.TeamID, AgentID: job.MemoryAgentID, UserID: job.MemoryUserID}
-	if err := s.Client.Call(ctx, job.InstanceID, "/v3/skill/extract/limits", "", scope.Fields(), &limits); err != nil {
+	if err := s.Client.Call(ctx, scope.InstanceID, "/v3/skill/extract/limits", "", scope.Fields(), &limits); err != nil {
 		return payload, false, err
 	}
 	if limits.MaxBytes < 1024 || limits.MaxMessages < 1 || limits.MaxMessages > 500 {

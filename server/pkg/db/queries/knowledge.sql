@@ -60,7 +60,7 @@ UPDATE knowledge_extraction SET status = 'pending', available_at = now(),
     last_error = NULL, attempts = 0, updated_at = now(),
     upstream_result = coalesce(upstream_result, '{}'::jsonb) ||
       jsonb_build_object('retry_failed_skills', true, 'retry_id', gen_random_uuid()::text)
-WHERE knowledge_extraction.id = $1 AND knowledge_extraction.workspace_id = $2 AND knowledge_extraction.status = 'failed' AND EXISTS (SELECT 1 FROM agent_memory_binding b WHERE b.memory_id=knowledge_extraction.memory_id AND b.agent_id=knowledge_extraction.agent_id AND b.created_at=knowledge_extraction.binding_created_at) RETURNING *;
+WHERE knowledge_extraction.id = $1 AND knowledge_extraction.workspace_id = $2 AND knowledge_extraction.status = 'failed' AND EXISTS (SELECT 1 FROM agent_memory m WHERE m.id=knowledge_extraction.memory_id AND m.workspace_id=knowledge_extraction.workspace_id AND m.status='ready') RETURNING *;
 
 -- name: DeleteKnowledgeForWorkspace :exec
 DELETE FROM knowledge_extraction WHERE workspace_id = $1;

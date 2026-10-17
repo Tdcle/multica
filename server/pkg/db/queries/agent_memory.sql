@@ -32,10 +32,6 @@ DELETE FROM agent_memory_binding WHERE workspace_id=$1 AND agent_id=$2;
 -- name: UnbindMemory :exec
 DELETE FROM agent_memory_binding WHERE workspace_id=$1 AND memory_id=$2;
 
--- name: CancelAgentMemoryExtractions :exec
-UPDATE knowledge_extraction SET status='cancelled',lease_token=NULL,lease_until=NULL,updated_at=now()
-WHERE workspace_id=$1 AND agent_id=$2 AND status IN ('pending','processing','submitted');
-
 -- name: HasActiveMemoryExtractions :one
 SELECT EXISTS(SELECT 1 FROM knowledge_extraction WHERE memory_id=$1 AND (status IN ('processing','submitted') OR (status='pending' AND source_payload IS NOT NULL)));
 

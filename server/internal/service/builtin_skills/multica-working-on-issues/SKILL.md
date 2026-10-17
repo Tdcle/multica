@@ -359,7 +359,10 @@ Omitting a Wiki reference lists its pages; omitting a code query reads graph sta
 Task credentials always use their own agent's bound memory and workspace.
 Caller-supplied agent/team IDs cannot select another agent's memory.
 Completing an issue triggers extraction into participating agents' memories;
-completing an execution or chat does not. Detached agents pause extraction and recall.
+completing an execution or chat does not. Each Done event keeps its original memory
+target: unbinding, rebinding, or archiving the agent while keeping its memory does
+not cancel queued extraction or redirect it into another space. Detached agents
+receive no recall and create no new extraction jobs until rebound.
 
 ## References
 

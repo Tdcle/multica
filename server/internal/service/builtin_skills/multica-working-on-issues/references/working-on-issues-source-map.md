@@ -240,6 +240,10 @@ grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.g
 - `server/migrations/419_agent_memory_spaces.up.sql`: per-agent Done transition extraction and automatic binding.
 - `server/internal/knowledge/spaces.go`: provisioning, retry and native deletion reconciliation.
 
+- `server/internal/handler/agent_memory.go`: binding changes preserve queued extraction.
+- `server/internal/knowledge/worker.go`: original extraction target survives detach and rebind.
+- `server/pkg/db/queries/knowledge.sql`: failed extraction retries use the original memory.
+- `e2e/memory-detach-extraction.spec.ts`: live extraction stays in its original space after detach and rebind.
 - `server/internal/knowledge/context.go`: authorized native injector context and scope fingerprint.
 - `server/internal/daemon/knowledge_scope.go`: discard provider history after Memory scope changes.
 - `services/agent-memory/patches/020-native-context-injectors.patch`: original TS injectors exposed through an internal read-only endpoint.

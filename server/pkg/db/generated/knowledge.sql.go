@@ -647,7 +647,7 @@ UPDATE knowledge_extraction SET status = 'pending', available_at = now(),
     last_error = NULL, attempts = 0, updated_at = now(),
     upstream_result = coalesce(upstream_result, '{}'::jsonb) ||
       jsonb_build_object('retry_failed_skills', true, 'retry_id', gen_random_uuid()::text)
-WHERE knowledge_extraction.id = $1 AND knowledge_extraction.workspace_id = $2 AND knowledge_extraction.status = 'failed' AND EXISTS (SELECT 1 FROM agent_memory_binding b WHERE b.memory_id=knowledge_extraction.memory_id AND b.agent_id=knowledge_extraction.agent_id AND b.created_at=knowledge_extraction.binding_created_at) RETURNING id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at, agent_id, memory_id, binding_created_at
+WHERE knowledge_extraction.id = $1 AND knowledge_extraction.workspace_id = $2 AND knowledge_extraction.status = 'failed' AND EXISTS (SELECT 1 FROM agent_memory m WHERE m.id=knowledge_extraction.memory_id AND m.workspace_id=knowledge_extraction.workspace_id AND m.status='ready') RETURNING id, workspace_id, issue_id, issue_revision, instance_id, team_id, memory_agent_id, memory_user_id, issue_snapshot, status, attempts, available_at, lease_until, lease_token, source_payload, upstream_result, last_error, created_at, updated_at, agent_id, memory_id, binding_created_at
 `
 
 type RetryKnowledgeExtractionParams struct {

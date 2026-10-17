@@ -2292,18 +2292,18 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 				writeError(w, 409, "memory provisioning or deletion is running; retry after it finishes")
 				return
 			}
+			busy, e := qtx.HasActiveMemoryExtractions(r.Context(), bound.MemoryID)
+			if e != nil {
+				writeError(w, 500, "failed to check extraction")
+				return
+			}
+			if busy {
+				writeError(w, 409, "memory extraction is running; retry after it finishes")
+				return
+			}
 		}
-		busy, e := qtx.HasActiveMemoryExtractions(r.Context(), bound.MemoryID)
-		if e != nil {
-			writeError(w, 500, "failed to check extraction")
-			return
-		}
-		if busy {
-			writeError(w, 409, "memory extraction is running; retry after it finishes")
-			return
-		}
-		if err = qtx.UnbindAgentMemory(r.Context(), db.UnbindAgentMemoryParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID}); err == nil {
-			err = qtx.CancelAgentMemoryExtractions(r.Context(), db.CancelAgentMemoryExtractionsParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
+		if err = qtx.UnbindAgentMemory(r.Context(), db.UnbindAgentMemoryParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID}); err == nil && deleteMemory == "true" {
+			err = qtx.CancelMissingMemoryExtractions(r.Context(), bound.MemoryID)
 		}
 		if err == nil && deleteMemory == "true" {
 			err = qtx.MarkAgentMemoryDeleting(r.Context(), db.MarkAgentMemoryDeletingParams{ID: bound.MemoryID, WorkspaceID: agent.WorkspaceID})
